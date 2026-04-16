@@ -1,9 +1,14 @@
 const express = require('express');
 const router = express.Router();
-const authController = require('../controllers/authController');
+const { registerBrand, registerCreator, login } = require('../controllers/authController');
 
-// Perhatikan: path di sini '/register', karena sudah di-prefix '/api/auth' di app.js
-router.post('/register', authController.register);
-router.post('/login', authController.login);
+// 1.1 Registrasi Brand
+router.post('/register/brand', registerBrand);
+
+// 1.2 Registrasi Creator
+router.post('/register/creator', registerCreator);
+
+// Login
+router.post('/login', login);
 
 module.exports = router;
