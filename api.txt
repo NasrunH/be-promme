@@ -1,0 +1,284 @@
+Spesifikasi API Endpoint Lengkap (v1.0.0)
+Sistem Affiliate Marketing & Creator Monetization
+1. AUTHENTICATION & REGISTRATION API
+1.1 Registrasi Brand
+Digunakan untuk mendaftarkan akun baru dengan role BRAND.
+URL: /api/v1/auth/register/brand
+Method: POST
+Auth: None
+Request Payload:
+{
+  "email": "hello@brand.com",
+  "password": "SecurePassword123!",
+  "nama_perusahaan": "PT Solusi Digital",
+  "pic_name": "Budi Santoso",
+  "phone_number": "08123456789"
+}
+
+Response (201 Created):
+{
+  "status": "success",
+  "message": "Registrasi Brand berhasil",
+  "data": {
+    "user_id": "usr_1111-2222-...",
+    "brand_id": "brd_3333-4444-..."
+  }
+}
+
+1.2 Registrasi Creator
+Digunakan untuk mendaftarkan akun baru dengan role CREATOR.
+URL: /api/v1/auth/register/creator
+Method: POST
+Auth: None
+Request Payload:
+{
+  "email": "creator@email.com",
+  "password": "SecurePassword123!",
+  "nama_lengkap": "Siti Aminah"
+}
+
+Response (201 Created):
+{
+  "status": "success",
+  "message": "Registrasi Creator berhasil",
+  "data": {
+    "user_id": "usr_5555-6666-...",
+    "creator_id": "crt_7777-8888-..."
+  }
+}
+
+1.3 Login (Authentication)
+URL: /api/v1/auth/login
+Method: POST
+Auth: None
+Request Payload:
+{
+  "email": "creator@email.com",
+  "password": "SecurePassword123!"
+}
+
+Response (200 OK):
+{
+  "status": "success",
+  "data": {
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR...",
+    "refresh_token": "def5020059c43d...",
+    "role": "CREATOR",
+    "expires_in": 900
+  }
+}
+
+2. CREATOR ONBOARDING & SETUP API
+2.1 Submit KYC (Know Your Customer)
+Untuk memverifikasi identitas Creator. Wajib sebelum melakukan penarikan dana.
+URL: /api/v1/creators/kyc
+Method: POST
+Auth: Creator JWT
+Request Payload:
+{
+  "nik": "3171234567890123",
+  "npwp": "12.345.678.9-012.000",
+  "ktp_image_url": "[https://s3.aws.com/bucket/ktp/usr1.jpg](https://s3.aws.com/bucket/ktp/usr1.jpg)",
+  "selfie_image_url": "[https://s3.aws.com/bucket/selfie/usr1.jpg](https://s3.aws.com/bucket/selfie/usr1.jpg)"
+}
+
+Response (202 Accepted):
+{
+  "status": "success",
+  "message": "Data KYC diterima dan sedang diproses (PENDING)",
+  "data": {
+    "kyc_status": "PENDING"
+  }
+}
+
+2.2 Hubungkan Akun Sosial Media (OAuth / Validasi Kepemilikan)
+Endpoint ini menerima auth_code (dari OAuth YouTube/TikTok) untuk mengikat Channel/Akun ke Creator secara permanen, menjamin konten yang disubmit benar miliknya.
+URL: /api/v1/creators/social-accounts/connect
+Method: POST
+Auth: Creator JWT
+Request Payload:
+{
+  "platform": "YOUTUBE",
+  "auth_code": "4/0AX4XfWh... (authorization code dari Google)",
+  "redirect_uri": "[https://platform.id/oauth/callback](https://platform.id/oauth/callback)"
+}
+
+Response (201 Created):
+{
+  "status": "success",
+  "message": "Akun YouTube berhasil dihubungkan",
+  "data": {
+    "connected_account_id": "soc_abc123",
+    "platform": "YOUTUBE",
+    "platform_account_id": "UC_x5XG1OV2P6uZZ5FSM9Ttw",
+    "username": "SitiVlogs",
+    "status": "VERIFIED"
+  }
+}
+
+2.3 Daftarkan Rekening Bank
+Rekening yang didaftarkan akan dicocokkan namanya dengan nama di KYC (wajib sama).
+URL: /api/v1/creators/bank-accounts
+Method: POST
+Auth: Creator JWT (Wajib sudah KYC Verified)
+Request Payload:
+{
+  "bank_code": "bca",
+  "account_number": "1234567890",
+  "account_name": "Siti Aminah"
+}
+
+Response (201 Created):
+{
+  "status": "success",
+  "data": {
+    "bank_account_id": "bnk_999888",
+    "status": "PENDING_VERIFICATION"
+  }
+}
+
+3. CAMPAIGN API (Brand)
+3.1 Buat Campaign Baru
+URL: /api/v1/campaigns
+Method: POST
+Auth: Brand JWT
+Request Payload:
+{
+  "nama_campaign": "Promo Gadget Merdeka",
+  "budget_total": 10000000, 
+  "daily_spend_limit": 2000000,
+  "platform": "YOUTUBE",
+  "komisi_per_view": 200,
+  "min_watch_duration": 60,
+  "max_submission_per_creator": 2,
+  "tanggal_mulai": "2026-08-01T00:00:00+07:00",
+  "tanggal_berakhir": "2026-08-31T23:59:59+07:00"
+}
+
+(Response: 201 Created mengembalikan data campaign_id dan status DRAFT)
+3.2 Top-up Budget (Midtrans Snap)
+URL: /api/v1/campaigns/{campaign_id}/topup
+Method: POST
+Auth: Brand JWT
+Request Payload:
+{
+  "amount": 10000000
+}
+
+(Response: 200 OK mengembalikan order_id dan snap_token Midtrans)
+4. SUBMISSION API (Creator)
+4.1 Submit Konten Baru
+Saat submit, Creator wajib mengirimkan connected_account_id. Sistem akan memvalidasi apakah URL video yang diinput benar-benar diterbitkan oleh Channel/Akun (connected_account_id) tersebut.
+URL: /api/v1/submissions
+Method: POST
+Auth: Creator JWT
+Request Payload:
+{
+  "campaign_id": "camp_550e8400-...",
+  "connected_account_id": "soc_abc123",
+  "content_url": "[https://www.youtube.com/watch?v=dQw4w9WgXcQ](https://www.youtube.com/watch?v=dQw4w9WgXcQ)"
+}
+
+Response (201 Created):
+{
+  "status": "success",
+  "message": "Submission diterima, sistem mengunci budget estimasi",
+  "data": {
+    "submission_id": "sub_a1b2c3d4",
+    "status": "PENDING",
+    "estimasi_komisi": 200000
+  }
+}
+
+Error Validation (Jika URL bukan dari akun yang bersangkutan):
+{
+  "status": "error",
+  "code": "ERR_KONTEN_BUKAN_MILIK_AKUN",
+  "message": "URL video yang dikirim tidak ditemukan di channel YouTube Anda."
+}
+
+4.2 Cek Status Submission
+URL: /api/v1/submissions/{submission_id}
+Method: GET
+Auth: Creator JWT
+Response (200 OK):
+{
+  "status": "success",
+  "data": {
+    "submission_id": "sub_a1b2c3d4",
+    "status": "SELESAI",
+    "views_tervalidasi": 1000,
+    "komisi_per_view": 200,
+    "gross_earning": 200000,
+    "platform_fee": 20000,
+    "net_earning": 180000
+  }
+}
+
+5. WALLET & WITHDRAWAL API (Creator)
+5.1 Cek Saldo Dompet
+URL: /api/v1/wallets/me
+Method: GET
+Auth: Creator JWT
+Response (200 OK):
+{
+  "status": "success",
+  "data": {
+    "wallet_id": "wal_998877",
+    "balance": 1800000,
+    "pending_balance": 0,
+    "total_earned": 5000000,
+    "total_withdrawn": 3200000
+  }
+}
+
+5.2 Ajukan Penarikan (Midtrans Iris)
+Untuk menarik dana, Creator memilih ID rekening yang sudah didaftarkan (bank_account_id) dan menyertakan idempotency_key untuk keamanan jaringan.
+URL: /api/v1/wallets/withdraw
+Method: POST
+Auth: Creator JWT (Wajib sudah KYC)
+Request Payload:
+{
+  "amount": 500000,
+  "bank_account_id": "bnk_999888",
+  "idempotency_key": "WD_CRT7777_1712563200"
+}
+
+Response (202 Accepted):
+{
+  "status": "success",
+  "message": "Penarikan diajukan dan masuk antrian diproses",
+  "data": {
+    "withdrawal_id": "wd_55443322",
+    "amount": 500000,
+    "status": "QUEUED"
+  }
+}
+
+6. WEBHOOKS (Midtrans Integration)
+6.1 Webhook Payment (Top-up Campaign)
+Sistem Midtrans akan menembak endpoint ini jika pembayaran Brand sukses. Platform akan memvalidasi signature dan mengubah budget_total serta status Campaign menjadi AKTIF.
+URL: /api/v1/webhooks/midtrans/payment
+Method: POST
+Auth: Signature Key Validation
+Request Payload dari Midtrans:
+{
+  "transaction_status": "settlement",
+  "order_id": "TOPUP-brd3333-1712563200",
+  "gross_amount": "10000000.00",
+  "signature_key": "v3r1f1c4t10n_h4sh_xxx..."
+}
+
+6.2 Webhook Payout (Withdrawal Creator)
+Sistem Midtrans Iris menembak endpoint ini saat dana sudah berhasil masuk ke rekening Creator (atau gagal). Platform akan memotong pending_balance dan memperbarui laporan.
+URL: /api/v1/webhooks/midtrans/payout
+Method: POST
+Auth: Signature Key Validation
+Request Payload dari Midtrans:
+{
+  "status": "processed",
+  "reference_no": "wd_55443322",
+  "amount": "500000.00"
+}
+
+
