@@ -5,6 +5,7 @@ require('dotenv').config();
 
 // Pastikan import ini benar jalurnya
 const authRoutes = require('./routes/authRoutes');
+const creatorRoutes = require('./routes/creatorRoutes'); // 👈 Tambahan module baru
 
 const app = express();
 
@@ -14,8 +15,9 @@ app.use(express.json()); // Supaya bisa baca JSON dari Postman
 app.use(morgan('dev')); // Untuk melihat log request di terminal
 
 // 2. ROUTES
-// Ini adalah baris yang mendaftarkan /api/auth
+// Ini adalah baris yang mendaftarkan endpoint utama
 app.use('/api/auth', authRoutes);
+app.use('/api/creators', creatorRoutes); // 👈 Daftarkan rute creator (tanpa /v1)
 
 // Health Check Route
 app.get('/', (req, res) => {
@@ -36,5 +38,8 @@ app.listen(PORT, () => {
   console.log(`
   🚀 Server berjalan di http://localhost:${PORT}
   👉 Endpoint Registrasi: http://localhost:${PORT}/api/auth/register
+  👉 Endpoint KYC: http://localhost:${PORT}/api/creators/kyc
   `);
 });
+
+module.exports = app;
