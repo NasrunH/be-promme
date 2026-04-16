@@ -91,8 +91,10 @@ const registerBankAccount = async (req, res) => {
     const { data: creator } = await supabase.from('creators').select('id, kyc_status').eq('user_id', userId).single();
 
     if (creator.kyc_status !== 'VERIFIED') {
-      // In development, we might skip this check, but spec says "Wajib sudah KYC Verified"
-      // return res.status(403).json({ status: 'error', message: 'Wajib verifikasi KYC sebelum mendaftarkan bank' });
+      return res.status(403).json({
+        status: 'error',
+        message: 'Akses ditolak. Anda harus menyelesaikan verifikasi KYC terlebih dahulu untuk mendaftarkan rekening bank.'
+      });
     }
 
     const { data: bankAcc, error } = await supabase

@@ -239,6 +239,41 @@ const exploreCampaigns = async (req, res) => {
   }
 };
 
+const getBrandCampaigns = async (req, res) => {
+  try {
+    const userId = req.user.id; // Diambil dari JWT token via authMiddleware
+
+    // 1. Dapatkan ID Brand berdasarkan user_id
+    const { data: brand, error: brandError } = await supabase
+      .from('brands')
+      .select('id')
+      .eq('user_id', userId)
+      .single();
+
+    if (brandError || !brand) {
+      return res.status(404).json({ status: 'error', message: 'Profil Brand tidak ditemukan' });
+    }
+
+    // 2. Ambil semua campaign yang dibuat oleh Brand ini
+    const { data: campaigns, error: campaignError } = await supabase
+      .from('campaigns')
+      .select('*')
+      .eq('brand_id', brand.id)
+      .order('created_at', { ascending: false }); // Urutkan dari yang terbaru (opsional, jika Anda punya kolom created_at)
+
+    if (campaignError) throw campaignError;
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Berhasil mengambil daftar campaign',
+      data: campaigns
+    });
+  } catch (error) {
+    console.error('Error getting brand campaigns:', error);
+    res.status(500).json({ status: 'error', message: 'Terjadi kesalahan pada server saat mengambil campaign' });
+  }
+};
+
 module.exports = { 
   createCampaign, 
   topupBudget, 
@@ -246,5 +281,6 @@ module.exports = {
   updateCampaignLimit, 
   claimRefund, 
   getCampaignAnalytics, 
-  exploreCampaigns 
+  exploreCampaigns,
+  getBrandCampaigns
 };

@@ -10,6 +10,7 @@ router.get('/explore', protect(['CREATOR']), campaignController.exploreCampaigns
 
 // Brand Routes
 router.post('/', protect(['BRAND']), campaignController.createCampaign);
+router.get('/my-campaigns', protect(['BRAND']), campaignController.getBrandCampaigns);
 router.post('/:campaign_id/topup', protect(['BRAND']), campaignController.topupBudget);
 router.patch('/:campaign_id/status', protect(['BRAND']), campaignController.updateCampaignStatus);
 router.put('/:campaign_id/limit', protect(['BRAND']), campaignController.updateCampaignLimit);
