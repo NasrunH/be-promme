@@ -24,10 +24,25 @@ const getFailedWithdrawals = async (req, res) => {
 
 const calculateTax = async (req, res) => {
     try {
-        const { data: creators } = await supabase.from('creators').select('id, user_id, npwp');
-        // Return dummy mock for tax calculation logic
-        res.json({ status: 'success', data: creators.map(c => ({ creator_id: c.id, has_npwp: !!c.npwp, estimated_tax_rate: c.npwp ? 0.02 : 0.04 })) });
-    } catch (e) { res.status(500).json({ status: 'error' }); }
+        // Tambahkan 'nama_lengkap' dalam select
+        const { data: creators } = await supabase
+            .from('creators')
+            .select('id, user_id, npwp, nama_lengkap');
+
+        if (!creators) throw new Error('Data creator tidak ditemukan');
+
+        res.json({ 
+            status: 'success', 
+            data: creators.map(c => ({ 
+                creator_id: c.id, 
+                nama_creator: c.nama_lengkap, // Data baru yang dikirim ke frontend
+                has_npwp: !!c.npwp, 
+                estimated_tax_rate: c.npwp ? 0.02 : 0.04 
+            })) 
+        });
+    } catch (e) { 
+        res.status(500).json({ status: 'error', message: e.message }); 
+    }
 };
 
 const getGmvReport = async (req, res) => {
