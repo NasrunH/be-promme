@@ -2,9 +2,19 @@ const supabase = require('../config/supabase');
 
 const listUsers = async (req, res) => {
     try {
-        const { data: users } = await supabase.from('users').select('id, email, role, status, created_at');
+        // Melakukan JOIN dengan tabel creators untuk mendapatkan id (creator_id) dan kyc_status
+        const { data: users, error } = await supabase.from('users').select(`
+            id, email, role, status, created_at,
+            creators ( id, kyc_status )
+        `);
+        
+        if (error) throw error;
+        
         res.json({ status: 'success', data: users });
-    } catch (e) { res.status(500).json({ status: 'error' }); }
+    } catch (e) { 
+        console.error("List Users Error:", e);
+        res.status(500).json({ status: 'error', message: 'Gagal menarik data pengguna' }); 
+    }
 };
 
 const updateUserStatus = async (req, res) => {
