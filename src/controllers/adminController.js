@@ -2,10 +2,11 @@ const supabase = require('../config/supabase');
 
 const listUsers = async (req, res) => {
     try {
-        // Melakukan JOIN dengan tabel creators untuk mendapatkan id (creator_id) dan kyc_status
+        // [REVISI]: Mengambil semua data (*) dari tabel creators dan brands
         const { data: users, error } = await supabase.from('users').select(`
             id, email, role, status, created_at,
-            creators ( id, kyc_status )
+            creators ( * ),
+            brands ( * )
         `);
         
         if (error) throw error;
