@@ -1,15 +1,46 @@
 const supabase = require('../config/supabase');
 const { snap } = require('../utils/midtrans');
 
+// Fungsi Helper untuk Upload ke Supabase Storage
+const uploadToSupabaseStorage = async (file) => {
+  // Buat nama file unik
+  const fileName = `assets/${Date.now()}-${file.originalname.replace(/\s+/g, '-')}`;
+  
+  const { data, error } = await supabase.storage
+    .from('campaign-assets') // Ganti dengan nama bucket Anda di Supabase
+    .upload(fileName, file.buffer, {
+      contentType: file.mimetype,
+      upsert: false
+    });
+
+  if (error) throw error;
+
+  // Dapatkan Public URL
+  const { data: publicUrlData } = supabase.storage
+    .from('campaign-assets')
+    .getPublicUrl(fileName);
+
+  return publicUrlData.publicUrl;
+};
+
 // 1. CREATE CAMPAIGN
 const createCampaign = async (req, res) => {
   try {
     const userId = req.user.id;
+    // req.body sekarang hanya berisi teks. req.files berisi file fisik.
     const { 
       nama_campaign, budget_total, daily_spend_limit, platform, 
       komisi_per_view, min_watch_duration, max_submission_per_creator,
       tanggal_mulai, tanggal_berakhir 
     } = req.body;
+
+    // --- PROSES UPLOAD FILE FISIK ---
+    let uploadedAssetUrls = [];
+    if (req.files && req.files.length > 0) {
+      // Jalankan upload secara paralel
+      const uploadPromises = req.files.map(file => uploadToSupabaseStorage(file));
+      uploadedAssetUrls = await Promise.all(uploadPromises);
+    }
 
     const { data: brand } = await supabase.from('brands').select('id').eq('user_id', userId).single();
 
@@ -19,7 +50,7 @@ const createCampaign = async (req, res) => {
         brand_id: brand.id,
         nama_campaign,
         budget_total,
-        budget_tersisa: 0, // Belum aktif sebelum topup
+        budget_tersisa: 0,
         daily_spend_limit,
         platform,
         komisi_per_view,
@@ -27,6 +58,7 @@ const createCampaign = async (req, res) => {
         max_submission_per_creator,
         tanggal_mulai,
         tanggal_berakhir,
+        asset_urls: uploadedAssetUrls, // [UPDATE] Array URL dari Storage
         status: 'DRAFT'
       }])
       .select().single();
@@ -35,10 +67,7 @@ const createCampaign = async (req, res) => {
 
     res.status(201).json({
       status: 'success',
-      data: {
-        campaign_id: campaign.campaign_id,
-        status: campaign.status
-      }
+      data: { campaign_id: campaign.campaign_id, status: campaign.status, assets: uploadedAssetUrls }
     });
 
   } catch (error) {
@@ -46,6 +75,58 @@ const createCampaign = async (req, res) => {
     res.status(500).json({ status: 'error', message: 'Gagal membuat campaign' });
   }
 };
+
+// 1.B UPDATE CAMPAIGN (Dukungan File Baru & URL Lama)
+const updateCampaign = async (req, res) => {
+  try {
+    const { campaign_id } = req.params;
+    const userId = req.user.id;
+    
+    // existing_asset_urls adalah array URL lama yang tidak dihapus oleh user di Frontend
+    const { 
+      nama_campaign, daily_spend_limit, platform, 
+      komisi_per_view, min_watch_duration, max_submission_per_creator,
+      tanggal_mulai, tanggal_berakhir,
+      existing_asset_urls 
+    } = req.body;
+
+    const { data: brand } = await supabase.from('brands').select('id').eq('user_id', userId).single();
+    if (!brand) return res.status(403).json({ message: 'Akses ditolak' });
+
+    // Parse existing urls (karena dikirim via FormData, array bisa berupa string JSON)
+    let finalAssetUrls = [];
+    if (existing_asset_urls) {
+       finalAssetUrls = Array.isArray(existing_asset_urls) ? existing_asset_urls : JSON.parse(existing_asset_urls);
+    }
+
+    // --- PROSES UPLOAD FILE BARU (Jika ada penambahan) ---
+    if (req.files && req.files.length > 0) {
+      const uploadPromises = req.files.map(file => uploadToSupabaseStorage(file));
+      const newUploadedUrls = await Promise.all(uploadPromises);
+      finalAssetUrls = [...finalAssetUrls, ...newUploadedUrls]; // Gabung URL lama + URL baru
+    }
+
+    const { data: campaign, error } = await supabase
+      .from('campaigns')
+      .update({ 
+        nama_campaign, daily_spend_limit, platform, komisi_per_view,
+        min_watch_duration, max_submission_per_creator, tanggal_mulai, tanggal_berakhir,
+        asset_urls: finalAssetUrls
+      })
+      .eq('campaign_id', campaign_id)
+      .eq('brand_id', brand.id)
+      .select().single();
+
+    if (error) throw error;
+
+    res.status(200).json({ status: 'success', message: 'Campaign diperbarui', data: campaign });
+
+  } catch (error) {
+    console.error('Update Campaign Error:', error);
+    res.status(500).json({ status: 'error', message: 'Gagal memperbarui campaign' });
+  }
+};
+
 
 // 2. TOP UP BUDGET (Midtrans Snap)
 const topupBudget = async (req, res) => {
@@ -276,6 +357,7 @@ const getBrandCampaigns = async (req, res) => {
 
 module.exports = { 
   createCampaign, 
+  updateCampaign,
   topupBudget, 
   updateCampaignStatus, 
   updateCampaignLimit, 
