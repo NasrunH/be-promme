@@ -1,34 +1,65 @@
+// --- src/controllers/brandController.js ---
 const supabase = require('../config/supabase');
+
+const getProfile = async (req, res) => {
+  try {
+    // Amankan pengambilan ID (berjaga-jaga format JWT token)
+    const userId = req.user.user_id || req.user.id;
+    
+    const { data: brand, error } = await supabase
+      .from('brands')
+      .select('nama_perusahaan, pic_name, phone_number')
+      .eq('user_id', userId)
+      .single();
+
+    if (error) throw error;
+
+    res.status(200).json({
+      status: 'success',
+      data: brand
+    });
+  } catch (error) {
+    console.error('Get Profile Error:', error);
+    res.status(500).json({ status: 'error', message: 'Gagal mengambil profil brand' });
+  }
+};
 
 // 1. UPDATE PROFILE
 const updateProfile = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user.user_id || req.user.id;
     const { nama_perusahaan, pic_name, phone_number } = req.body;
 
     const { data: brand, error } = await supabase
       .from('brands')
       .update({ nama_perusahaan, pic_name, phone_number })
       .eq('user_id', userId)
-      .select().single();
+      .select(); // [REVISI]: Hapus .single() agar tidak error jika user menyimpan data yang sama (0 rows affected)
 
     if (error) throw error;
+
+    // Jika data kosong, berarti profil brand untuk user_id ini belum ada di tabel brands
+    if (!brand || brand.length === 0) {
+      throw new Error('Profil Brand tidak ditemukan di database.');
+    }
 
     res.status(200).json({
       status: 'success',
       message: 'Profil berhasil diupdate',
-      data: brand
+      data: brand[0]
     });
 
   } catch (error) {
-    res.status(500).json({ status: 'error', message: 'Gagal mengupdate profil brand' });
+    console.error('Update Profile Error:', error);
+    // [REVISI]: Kirim pesan error asli dari DB ke frontend (SweetAlert)
+    res.status(500).json({ status: 'error', message: error.message || 'Gagal mengupdate profil brand' });
   }
 };
 
 // 2. GET DASHBOARD
 const getDashboard = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user.user_id || req.user.id;
     const { data: brand } = await supabase.from('brands').select('id').eq('user_id', userId).single();
 
     // Dapatkan semua kampanye Brand ini
@@ -74,4 +105,4 @@ const getDashboard = async (req, res) => {
   }
 };
 
-module.exports = { updateProfile, getDashboard };
+module.exports = { getProfile, updateProfile, getDashboard };
