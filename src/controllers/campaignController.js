@@ -186,6 +186,91 @@ const topupBudget = async (req, res) => {
   }
 };
 
+const crypto = require('crypto');
+
+// 2.B MIDTRANS WEBHOOK HANDLER
+const handleMidtransNotification = async (req, res) => {
+  try {
+    const data = req.body;
+
+    // 1. Validasi Keamanan (Signature Key)
+    const serverKey = process.env.MIDTRANS_SERVER_KEY;
+    const hash = crypto.createHash('sha512')
+      .update(`${data.order_id}${data.status_code}${data.gross_amount}${serverKey}`)
+      .digest('hex');
+
+    if (data.signature_key !== hash) {
+      return res.status(403).json({ status: 'error', message: 'Invalid signature key' });
+    }
+
+    const transactionStatus = data.transaction_status;
+    const fraudStatus = data.fraud_status;
+    const orderId = data.order_id;
+
+    // 2. Tentukan Status Akhir Berdasarkan Response Midtrans
+    let finalStatus = 'PENDING';
+    if (transactionStatus == 'capture') {
+        if (fraudStatus == 'challenge') finalStatus = 'CHALLENGE';
+        else if (fraudStatus == 'accept') finalStatus = 'SUCCESS';
+    } else if (transactionStatus == 'settlement') {
+        finalStatus = 'SUCCESS';
+    } else if (transactionStatus == 'cancel' || transactionStatus == 'deny' || transactionStatus == 'expire') {
+        finalStatus = 'FAILED';
+    }
+
+    // 3. Cari Transaksi di Database
+    const { data: topupData, error: findError } = await supabase
+        .from('topup_transactions')
+        .select('*')
+        .eq('order_id', orderId)
+        .single();
+
+    if (findError || !topupData) {
+        return res.status(404).json({ message: 'Transaction not found' });
+    }
+
+    // Cegah proses berulang jika transaksi sudah pernah di-set sukses sebelumnya
+    if (topupData.status === 'SUCCESS') {
+        return res.status(200).json({ message: 'Transaction already processed' });
+    }
+
+    // 4. Update Status Transaksi di Tabel topup_transactions
+    await supabase.from('topup_transactions')
+        .update({ status: finalStatus })
+        .eq('order_id', orderId);
+
+    // 5. Eksekusi Logika Bisnis Jika Pembayaran Sukses
+    if (finalStatus === 'SUCCESS') {
+        // Ambil data campaign saat ini
+        const { data: campaign } = await supabase
+            .from('campaigns')
+            .select('budget_total, budget_tersisa')
+            .eq('campaign_id', topupData.campaign_id)
+            .single();
+
+        // Kalkulasi budget baru
+        const newBudgetTotal = Number(campaign.budget_total) + Number(data.gross_amount);
+        const newBudgetTersisa = Number(campaign.budget_tersisa) + Number(data.gross_amount);
+
+        // Update campaign: tambah saldo dan ubah status jadi AKTIF
+        await supabase.from('campaigns')
+            .update({
+                budget_total: newBudgetTotal,
+                budget_tersisa: newBudgetTersisa,
+                status: 'AKTIF' 
+            })
+            .eq('campaign_id', topupData.campaign_id);
+    }
+
+    // 6. WAJIB: Balas Midtrans dengan 200 OK agar mereka tidak mengulang notifikasi
+    res.status(200).json({ status: 'success' });
+
+  } catch (error) {
+    console.error('Midtrans Webhook Error:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error' });
+  }
+};
+
 // 3. UPDATE STATUS CAMPAIGN
 const updateCampaignStatus = async (req, res) => {
   try {
@@ -358,7 +443,8 @@ const getBrandCampaigns = async (req, res) => {
 module.exports = { 
   createCampaign, 
   updateCampaign,
-  topupBudget, 
+  topupBudget,
+  handleMidtransNotification,
   updateCampaignStatus, 
   updateCampaignLimit, 
   claimRefund, 

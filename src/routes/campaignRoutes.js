@@ -4,10 +4,13 @@ const campaignController = require('../controllers/campaignController');
 const { protect } = require('../middlewares/authMiddleware');
 const upload = require('../middlewares/uploadMiddleware');
 
-// Creator Routes
+// Webhook
+router.post('/midtrans-webhook', campaignController.handleMidtransNotification);
+
+// Creator
 router.get('/explore', protect(['CREATOR']), campaignController.exploreCampaigns);
 
-// Brand Routes
+// Brand
 router.post('/', protect(['BRAND']), upload.array('asset_files', 5), campaignController.createCampaign);
 router.get('/my-campaigns', protect(['BRAND']), campaignController.getBrandCampaigns);
 router.post('/:campaign_id/topup', protect(['BRAND']), campaignController.topupBudget);
