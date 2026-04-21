@@ -2,44 +2,120 @@ const supabase = require('../config/supabase');
 const speakeasy = require('speakeasy');
 
 // 1. SUBMIT KYC
+// Fungsi Helper untuk upload ke Supabase Storage
+const uploadToSupabase = async (file, folderName, userId) => {
+  // Buat nama file yang unik: folder/userId_timestamp.ext
+  const fileExtension = file.originalname.split('.').pop();
+  const fileName = `${folderName}/${userId}_${Date.now()}.${fileExtension}`;
+
+  // Upload Buffer ke Supabase
+  const { data, error } = await supabase.storage
+    .from('kyc-documents')
+    .upload(fileName, file.buffer, {
+      contentType: file.mimetype,
+      upsert: true
+    });
+
+  if (error) {
+    throw new Error(`Gagal upload ${folderName}: ` + error.message);
+  }
+
+  // Dapatkan Public URL
+  const { data: publicUrlData } = supabase.storage
+    .from('kyc-documents')
+    .getPublicUrl(fileName);
+
+  return publicUrlData.publicUrl;
+};
+// 1. SUBMIT KYC
 const submitKYC = async (req, res) => {
   try {
-    const { nik, npwp, ktp_image_url, selfie_image_url } = req.body;
+    const { nik, npwp } = req.body;
     const userId = req.user.id;
 
-    // Ambil creator_id dari user_id
-    const { data: creator, error: creatorError } = await supabase
+    // 1. Validasi Input Data
+    if (!nik || nik.length !== 16) {
+      return res.status(400).json({ 
+        status: "error", 
+        message: 'NIK wajib diisi dan harus berjumlah 16 digit.' 
+      });
+    }
+
+    // 2. Validasi File Upload dari Multer
+    if (!req.files || !req.files['ktp_image'] || !req.files['selfie_image']) {
+      return res.status(400).json({ 
+        status: "error", 
+        message: 'Foto KTP dan Foto Selfie wajib diunggah.' 
+      });
+    }
+
+    const ktpFile = req.files['ktp_image'][0];
+    const selfieFile = req.files['selfie_image'][0];
+
+    // 3. Upload File ke Supabase Storage
+    // Menyimpan di folder yang berbeda (opsional agar rapi)
+    const ktp_image_url = await uploadToSupabase(ktpFile, 'ktp', userId);
+    const selfie_image_url = await uploadToSupabase(selfieFile, 'selfies', userId);
+
+    // 4. Update data di tabel creators
+    const { data, error } = await supabase
       .from('creators')
-      .select('id')
+      .update({ 
+        nik, 
+        npwp: npwp || null, 
+        ktp_image_url, 
+        selfie_image_url,
+        kyc_status: 'PENDING',
+        updated_at: new Date()
+      })
+      .eq('user_id', userId)
+      .select();
+
+    if (error) {
+      console.error('Database Update Error:', error);
+      throw error;
+    }
+
+    if (!data || data.length === 0) {
+      return res.status(404).json({ 
+        status: "error", 
+        message: "Profil Creator tidak ditemukan untuk user ini." 
+      });
+    }
+
+    // 5. Respon Sukses
+    res.status(202).json({
+      status: "success",
+      message: "Data KYC diterima dan sedang diproses (PENDING)",
+      data: {
+        kyc_status: "PENDING",
+        ktp_image_url: ktp_image_url,
+        selfie_image_url: selfie_image_url
+      }
+    });
+  } catch (error) {
+    console.error('KYC Submission Error:', error);
+    res.status(500).json({ 
+      status: "error", 
+      message: "Gagal memproses data KYC",
+      details: error.message 
+    });
+  }
+};
+
+const getProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { data: creator, error } = await supabase
+      .from('creators')
+      .select('nik, npwp, kyc_status, ktp_image_url, selfie_image_url')
       .eq('user_id', userId)
       .single();
 
-    if (creatorError || !creator) {
-      return res.status(404).json({ status: 'error', message: 'Profil Creator tidak ditemukan' });
-    }
-
-    const { error: updateError } = await supabase
-      .from('creators')
-      .update({
-        nik,
-        npwp,
-        ktp_image_url,
-        selfie_image_url,
-        kyc_status: 'PENDING'
-      })
-      .eq('id', creator.id);
-
-    if (updateError) throw updateError;
-
-    res.status(202).json({
-      status: 'success',
-      message: 'Data KYC diterima dan sedang diproses (PENDING)',
-      data: { kyc_status: 'PENDING' }
-    });
-
+    if (error) throw error;
+    res.status(200).json({ status: 'success', data: creator });
   } catch (error) {
-    console.error('KYC Error:', error);
-    res.status(500).json({ status: 'error', message: 'Internal server error' });
+    res.status(500).json({ status: 'error', message: 'Gagal mengambil profile' });
   }
 };
 
@@ -174,4 +250,4 @@ const verify2FA = async (req, res) => {
 };
 
 
-module.exports = { submitKYC, connectSocialAccount, registerBankAccount, setup2FA, verify2FA };
+module.exports = { submitKYC, connectSocialAccount, registerBankAccount, setup2FA, verify2FA, getProfile };
