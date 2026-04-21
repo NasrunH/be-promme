@@ -75,3 +75,5 @@ app.listen(PORT, () => {
   👉 API Base: http://localhost:${PORT}/api/v1
   `);
 });
+
+module.exports = app;
