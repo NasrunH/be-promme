@@ -70,12 +70,6 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 app.use(morgan('dev'));
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`
-  🚀 Server berjalan di http://localhost:${PORT}
-  👉 API Base: http://localhost:${PORT}/api/v1
-  `);
-});
+
 
 module.exports = app;
