@@ -7,5 +7,6 @@ const { protect } = require('../middlewares/authMiddleware');
 router.get('/me', protect(['CREATOR']), walletController.getWalletBalance);
 router.post('/withdraw', protect(['CREATOR']), walletController.requestWithdrawal);
 router.get('/transactions', protect(['CREATOR']), walletController.getWalletTransactions);
+router.get('/earnings', protect(['CREATOR']), walletController.getEarningDetails);
 
 module.exports = router;

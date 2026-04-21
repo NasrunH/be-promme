@@ -5,6 +5,7 @@ require('dotenv').config();
 
 // Imports
 const { initCronJobs } = require('./utils/cronJobs');
+const { initTrafficTracker } = require('./jobs/trafficTracker');
 const authRoutes = require('./routes/authRoutes');
 const creatorRoutes = require('./routes/creatorRoutes');
 const campaignRoutes = require('./routes/campaignRoutes');
@@ -19,6 +20,7 @@ const app = express();
 
 // 1. INITIALIZE BACKGROUND WORKERS
 initCronJobs();
+initTrafficTracker();
 
 // 2. MIDDLEWARE
 app.use(cors());

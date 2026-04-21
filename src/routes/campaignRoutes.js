@@ -6,6 +6,8 @@ const upload = require('../middlewares/uploadMiddleware');
 
 // Creator Routes
 router.get('/explore', protect(['CREATOR']), campaignController.exploreCampaigns);
+router.get('/my-joined', protect(['CREATOR']), campaignController.getMyCampaigns);
+router.post('/:campaign_id/join', protect(['CREATOR']), campaignController.joinCampaign);
 
 // Brand Routes
 router.post('/', protect(['BRAND']), upload.array('asset_files', 5), campaignController.createCampaign);
@@ -15,6 +17,7 @@ router.patch('/:campaign_id/status', protect(['BRAND']), campaignController.upda
 router.put('/:campaign_id', protect(['BRAND']), upload.array('asset_files', 5), campaignController.updateCampaign);
 router.put('/:campaign_id/limit', protect(['BRAND']), campaignController.updateCampaignLimit);
 router.post('/:campaign_id/refund', protect(['BRAND']), campaignController.claimRefund);
+router.get('/:campaign_id/participants', protect(['BRAND']), campaignController.getCampaignParticipants);
 router.get('/:campaign_id/analytics', protect(['BRAND', 'ADMIN']), campaignController.getCampaignAnalytics);
 
 module.exports = router;

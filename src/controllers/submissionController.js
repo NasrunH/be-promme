@@ -13,7 +13,7 @@ const getCreatorByUserId = async (userId) => {
   return data;
 };
 
-// 4.1 Submit Konten Baru
+// 4.1 Submit Konten Baru (WAJIB JOIN DULU)
 exports.submitContent = async (req, res) => {
   try {
     const { campaign_id, connected_account_id, content_url } = req.body;
@@ -22,31 +22,41 @@ exports.submitContent = async (req, res) => {
     // 1. Dapatkan Data Creator
     const creator = await getCreatorByUserId(userId);
 
-    // 2. Validasi Akun Sosial Media yang dihubungkan
-    const { data: socialAccount, error: socialError } = await supabase
-      .from('connected_social_accounts')
-      .select('*')
-      .eq('id', connected_account_id)
-      .eq('creator_id', creator.id) // Pastikan akun ini milik creator yang sedang login
-      .single();
+    // 2. === GUARD: WAJIB JOIN CAMPAIGN DULU ===
+    const { data: participant } = await supabase
+      .from('campaign_participants')
+      .select('id')
+      .eq('campaign_id', campaign_id)
+      .eq('creator_id', creator.id)
+      .maybeSingle();
 
-    if (socialError || !socialAccount) {
+    if (!participant) {
       return res.status(403).json({
         status: 'error',
-        code: 'ERR_KONTEN_BUKAN_MILIK_AKUN',
-        message: 'Akun sosial media tidak ditemukan atau bukan milik Anda.'
+        code: 'ERR_NOT_JOINED',
+        message: 'Anda belum bergabung dengan campaign ini. Silakan join terlebih dahulu sebelum submit konten.'
       });
     }
 
-    // (MOCK LOGIC) Validasi Sederhana: Cek apakah URL sesuai platform
-    // Di dunia nyata, Anda akan memanggil API YouTube/TikTok untuk memvalidasi kepemilikan video
-    const isUrlMatchPlatform = content_url.toLowerCase().includes(socialAccount.platform.toLowerCase());
-    if (!isUrlMatchPlatform && socialAccount.platform !== 'WEBSITE') {
-       // Bebas diimplementasikan sesuai kebutuhan, untuk sekarang kita bypass jika gagal MOCK
-       // throw new Error('URL video yang dikirim tidak sesuai dengan platform akun.');
+    // 3. Validasi Akun Sosial Media (jika connected_account_id disertakan)
+    if (connected_account_id) {
+      const { data: socialAccount, error: socialError } = await supabase
+        .from('connected_social_accounts')
+        .select('*')
+        .eq('id', connected_account_id)
+        .eq('creator_id', creator.id)
+        .single();
+
+      if (socialError || !socialAccount) {
+        return res.status(403).json({
+          status: 'error',
+          code: 'ERR_KONTEN_BUKAN_MILIK_AKUN',
+          message: 'Akun sosial media tidak ditemukan atau bukan milik Anda.'
+        });
+      }
     }
 
-    // 3. Dapatkan Data Campaign & Cek Budget
+    // 4. Dapatkan Data Campaign & Cek Status
     const { data: campaign, error: campError } = await supabase
       .from('campaigns')
       .select('*')
@@ -61,26 +71,36 @@ exports.submitContent = async (req, res) => {
        throw new Error(`Campaign saat ini berstatus ${campaign.status}. Anda tidak dapat melakukan submission.`);
     }
 
-    // Hitung Estimasi Komisi (Misal: Estimasi awal adalah target minimal 1000 views, bisa diubah sesuai logika bisnis)
-    // Di PRD, tertulis "sistem mengunci budget estimasi". Kita asumsikan estimasi awal = komisi_per_view * 1000
+    // 5. Cek batas max submission per creator
+    const { count: existingSubmissions } = await supabase
+      .from('submissions')
+      .select('*', { count: 'exact', head: true })
+      .eq('campaign_id', campaign_id)
+      .eq('creator_id', creator.id);
+
+    if (existingSubmissions >= campaign.max_submission_per_creator) {
+      return res.status(400).json({
+        status: 'error',
+        code: 'ERR_MAX_SUBMISSION',
+        message: `Anda sudah mencapai batas maksimum ${campaign.max_submission_per_creator} submission untuk campaign ini.`
+      });
+    }
+
+    // 6. Hitung Estimasi Komisi Awal (asumsi 1000 views pertama)
     const estimasiViewsAwal = 1000; 
-    const estimasiKomisi = campaign.komisi_per_view * estimasiViewsAwal;
+    const estimasiKomisi = campaign.komisi_per_view; // Karena per 1000 views
 
     if (campaign.budget_tersisa < estimasiKomisi) {
         throw new Error('Budget campaign tidak mencukupi untuk menerima submission baru saat ini.');
     }
 
-    // 4. Lakukan Insert Submission & Update Budget (Seharusnya pakai Transaksi DB/RPC)
-    // Di Supabase JS biasa, kita tidak punya transaksi natif, jadi kita pakai RPC atau lakukan 2 step berurutan.
-    // Untuk MVP ini, kita lakukan berurutan.
-
-    // A. Insert Submission
+    // 7. Insert Submission
     const { data: submission, error: subError } = await supabase
       .from('submissions')
       .insert([{
         campaign_id: campaign_id,
         creator_id: creator.id,
-        connected_account_id: connected_account_id,
+        connected_account_id: connected_account_id || null,
         content_url: content_url,
         status: 'PENDING',
         estimasi_komisi: estimasiKomisi
@@ -93,29 +113,30 @@ exports.submitContent = async (req, res) => {
       throw subError;
     }
 
-    // B. Update Budget Campaign (Pindahkan dari budget_tersisa ke budget_tereservasi)
+    // 8. Update Budget Campaign (estimasi)
     const { error: updateCampError } = await supabase
       .from('campaigns')
       .update({
         budget_tersisa: campaign.budget_tersisa - estimasiKomisi,
-        budget_tereservasi: campaign.budget_tereservasi + estimasiKomisi
+        budget_tereservasi: (campaign.budget_tereservasi || 0) + estimasiKomisi
       })
       .eq('campaign_id', campaign_id);
     
     if (updateCampError) {
-      // Jika update budget gagal, idealnya kita me-rollback (delete) submission yang baru dibuat
-      // Namun untuk kesederhanaan MVP saat ini, kita abaikan error handling rollback kompleks
       console.error("Gagal mengupdate budget:", updateCampError);
     }
 
-    // 5. Audit Log (Untuk IP Tracking & Antifraud)
-    await logAudit(req, 'SUBMIT_CONTENT', 'SUBMISSION', submission.submission_id, null, { 
-      campaign_id, 
-      content_url,
-      creator_email: req.user?.email || 'unknown'
-    });
+    // 9. Audit Log (Untuk IP Tracking & Antifraud)
+    try {
+      await logAudit(req, 'SUBMIT_CONTENT', 'SUBMISSION', submission.submission_id, null, { 
+        campaign_id, 
+        content_url,
+        creator_email: req.user?.email || 'unknown'
+      });
+    } catch (logErr) {
+      console.error('Audit log error:', logErr);
+    }
 
-    // 6. Response Berhasil
     return res.status(201).json({
       status: 'success',
       message: 'Submission diterima, sistem mengunci budget estimasi',
@@ -139,17 +160,16 @@ exports.getSubmissionStatus = async (req, res) => {
 
     const creator = await getCreatorByUserId(userId);
 
-    // Ambil data submission beserta data campaign yang berelasi
     const { data: submission, error } = await supabase
       .from('submissions')
       .select(`
         *,
         campaigns (
-            komisi_per_view
+            komisi_per_view, nama_campaign, platform
         )
       `)
       .eq('submission_id', submission_id)
-      .eq('creator_id', creator.id) // Pastikan hanya bisa lihat submission miliknya sendiri
+      .eq('creator_id', creator.id)
       .single();
 
     if (error || !submission) {
@@ -165,25 +185,28 @@ exports.getSubmissionStatus = async (req, res) => {
         submission_id: submission.submission_id,
         status: submission.status,
         views_tervalidasi: submission.views_tervalidasi,
-        komisi_per_view: submission.campaigns.komisi_per_view,
+        content_url: submission.content_url,
+        nama_campaign: submission.campaigns?.nama_campaign,
+        platform: submission.campaigns?.platform,
+        komisi_per_view: submission.campaigns?.komisi_per_view,
         gross_earning: submission.gross_earning,
         platform_fee: submission.platform_fee,
-        net_earning: submission.net_earning
+        net_earning: submission.net_earning,
+        submitted_at: submission.submitted_at
       }
     });
 
   } catch (error) {
     return res.status(400).json({ status: 'error', message: error.message });
   }
-  
 };
 
+// 4.3 Semua Submission Creator (All Campaigns)
 exports.getAllSubmissions = async (req, res) => {
   try {
     const userId = req.user.user_id || req.user.id;
     const creator = await getCreatorByUserId(userId);
 
-    // Ambil semua submission, urutkan dari yang terbaru
     const { data: submissions, error } = await supabase
       .from('submissions')
       .select(`
@@ -194,7 +217,8 @@ exports.getAllSubmissions = async (req, res) => {
         views_tervalidasi,
         net_earning,
         estimasi_komisi,
-        campaigns ( nama_campaign, platform )
+        alasan_penolakan,
+        campaigns ( campaign_id, nama_campaign, platform, komisi_per_view )
       `)
       .eq('creator_id', creator.id)
       .order('submitted_at', { ascending: false });
@@ -204,17 +228,92 @@ exports.getAllSubmissions = async (req, res) => {
     return res.status(200).json({
       status: 'success',
       message: 'Berhasil mengambil riwayat submission',
-      data: submissions.map(sub => ({
-        submission_id: sub.submission_id || sub.id, // Fallback ke 'id' jika kolom PK bernama 'id'
+      data: (submissions || []).map(sub => ({
+        submission_id: sub.submission_id,
+        campaign_id: sub.campaigns?.campaign_id,
         nama_campaign: sub.campaigns?.nama_campaign,
         platform: sub.campaigns?.platform,
+        komisi_per_view: sub.campaigns?.komisi_per_view,
         content_url: sub.content_url,
         status: sub.status,
         submitted_at: sub.submitted_at,
-        views: sub.views_tervalidasi,
-        estimasi_komisi: sub.estimasi_komisi,
-        net_earning: sub.net_earning
+        views: sub.views_tervalidasi || 0,
+        estimasi_komisi: sub.estimasi_komisi || 0,
+        net_earning: sub.net_earning || 0,
+        alasan_penolakan: sub.alasan_penolakan || null
       }))
+    });
+
+  } catch (error) {
+    return res.status(400).json({ status: 'error', message: error.message });
+  }
+};
+
+// 4.4 Submission per Campaign (untuk tracking di My Campaigns)
+exports.getSubmissionsByCampaign = async (req, res) => {
+  try {
+    const { campaign_id } = req.params;
+    const userId = req.user.user_id || req.user.id;
+
+    const creator = await getCreatorByUserId(userId);
+
+    // Pastikan creator sudah join campaign ini
+    const { data: participant } = await supabase
+      .from('campaign_participants')
+      .select('id')
+      .eq('campaign_id', campaign_id)
+      .eq('creator_id', creator.id)
+      .maybeSingle();
+
+    if (!participant) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Anda tidak terdaftar dalam campaign ini.'
+      });
+    }
+
+    // Ambil data campaign untuk header & aset
+    const { data: campaign } = await supabase
+      .from('campaigns')
+      .select('campaign_id, nama_campaign, platform, komisi_per_view, status, tanggal_berakhir, min_konten_diterima, asset_urls, min_watch_duration, max_submission_per_creator, budget_tersisa')
+      .eq('campaign_id', campaign_id)
+      .single();
+
+    const { data: submissions, error } = await supabase
+      .from('submissions')
+      .select(`
+        submission_id,
+        content_url,
+        status,
+        submitted_at,
+        views_tervalidasi,
+        estimasi_komisi,
+        gross_earning,
+        net_earning,
+        alasan_penolakan
+      `)
+      .eq('campaign_id', campaign_id)
+      .eq('creator_id', creator.id)
+      .order('submitted_at', { ascending: false });
+
+    if (error) throw error;
+
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        campaign_info: campaign,
+        submissions: (submissions || []).map(s => ({
+          submission_id: s.submission_id,
+          content_url: s.content_url,
+          status: s.status,
+          submitted_at: s.submitted_at,
+          views: s.views_tervalidasi || 0,
+          estimasi_komisi: s.estimasi_komisi || 0,
+          gross_earning: s.gross_earning || 0,
+          net_earning: s.net_earning || 0,
+          alasan_penolakan: s.alasan_penolakan || null
+        }))
+      }
     });
 
   } catch (error) {

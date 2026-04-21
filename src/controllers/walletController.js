@@ -1,10 +1,11 @@
 const supabase = require('../config/supabase');
 
-// 1. GET WALLET BALANCE
+// 1. GET WALLET BALANCE (Enriched with summary)
 const getWalletBalance = async (req, res) => {
   try {
     const userId = req.user.id;
     const { data: creator } = await supabase.from('creators').select('id').eq('user_id', userId).single();
+    if (!creator) return res.status(404).json({ status: 'error', message: 'Creator tidak ditemukan' });
     
     const { data: wallet, error } = await supabase
       .from('wallets')
@@ -18,10 +19,11 @@ const getWalletBalance = async (req, res) => {
       status: 'success',
       data: {
         wallet_id: wallet.wallet_id,
-        balance: wallet.balance,
-        pending_balance: wallet.pending_balance,
-        total_earned: wallet.total_earned,
-        total_withdrawn: wallet.total_withdrawn
+        balance: wallet.balance || 0,
+        hold_balance: wallet.hold_balance || 0,
+        pending_balance: wallet.pending_balance || 0,
+        total_earned: wallet.total_earned || 0,
+        total_withdrawn: wallet.total_withdrawn || 0
       }
     });
   } catch (error) {
@@ -45,13 +47,11 @@ const requestWithdrawal = async (req, res) => {
         return res.status(400).json({ status: 'error', message: 'Minimal penarikan adalah Rp 50.000' });
     }
 
-    // Check Balance
     const { data: wallet } = await supabase.from('wallets').select('balance').eq('creator_id', creator.id).single();
     if (wallet.balance < amount) {
         return res.status(400).json({ status: 'error', message: 'Saldo tidak mencukupi' });
     }
 
-    // Insert Withdrawal record
     const { data: wd, error } = await supabase
       .from('withdrawals')
       .insert([{
@@ -84,7 +84,7 @@ const requestWithdrawal = async (req, res) => {
   }
 };
 
-// 3. GET WALLET LEDGER
+// 3. GET WALLET LEDGER (Riwayat Transaksi)
 const getWalletTransactions = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -106,4 +106,110 @@ const getWalletTransactions = async (req, res) => {
   }
 };
 
-module.exports = { getWalletBalance, requestWithdrawal, getWalletTransactions };
+// 4. GET EARNING DETAILS (Breakdown pendapatan per submission/campaign)
+const getEarningDetails = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { data: creator, error: creatorErr } = await supabase
+      .from('creators')
+      .select('id')
+      .eq('user_id', userId)
+      .single();
+
+    if (creatorErr || !creator) {
+      return res.status(404).json({ status: 'error', message: 'Creator tidak ditemukan' });
+    }
+
+    // Ambil semua submission yang sudah ada earning (tidak hanya pending)
+    const { data: submissions, error: subErr } = await supabase
+      .from('submissions')
+      .select(`
+        submission_id,
+        content_url,
+        status,
+        submitted_at,
+        views_tervalidasi,
+        estimasi_komisi,
+        gross_earning,
+        platform_fee,
+        net_earning,
+        campaigns (
+          campaign_id,
+          nama_campaign,
+          platform,
+          komisi_per_view
+        )
+      `)
+      .eq('creator_id', creator.id)
+      .order('submitted_at', { ascending: false });
+
+    if (subErr) throw subErr;
+
+    // Hitung summary totals dari submissions
+    let totalEarned = 0;
+    let totalPending = 0;
+
+    const earningRows = (submissions || []).map(s => {
+      const campData = Array.isArray(s.campaigns) ? s.campaigns[0] : s.campaigns;
+      const netEarning = s.net_earning || 0;
+      const isPaid = s.status === 'SELESAI';
+      const isPending = s.status === 'SIAP_BAYAR' || s.status === 'DIPROSES';
+
+      if (isPaid) totalEarned += netEarning;
+      if (isPending) totalPending += (s.estimasi_komisi || 0);
+
+      return {
+        submission_id: s.submission_id,
+        campaign_id: campData?.campaign_id,
+        nama_campaign: campData?.nama_campaign || '-',
+        platform: campData?.platform || '-',
+        content_url: s.content_url,
+        status: s.status,
+        submitted_at: s.submitted_at,
+        views: s.views_tervalidasi || 0,
+        estimasi_komisi: s.estimasi_komisi || 0,
+        gross_earning: s.gross_earning || 0,
+        platform_fee: s.platform_fee || 0,
+        net_earning: netEarning,
+        payment_status: isPaid ? 'DIBAYAR' : isPending ? 'MENUNGGU_PEMBAYARAN' : s.status === 'DITOLAK' ? 'DITOLAK' : 'BELUM_SELESAI'
+      };
+    });
+
+    // Hitung per-campaign summary
+    const campaignSummary = {};
+    earningRows.forEach(row => {
+      if (!row.campaign_id) return;
+      if (!campaignSummary[row.campaign_id]) {
+        campaignSummary[row.campaign_id] = {
+          campaign_id: row.campaign_id,
+          nama_campaign: row.nama_campaign,
+          platform: row.platform,
+          submission_count: 0,
+          total_views: 0,
+          total_earning: 0
+        };
+      }
+      campaignSummary[row.campaign_id].submission_count++;
+      campaignSummary[row.campaign_id].total_views += row.views;
+      campaignSummary[row.campaign_id].total_earning += row.net_earning;
+    });
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        summary: {
+          total_earned: totalEarned,
+          total_pending: totalPending
+        },
+        per_campaign: Object.values(campaignSummary),
+        earnings: earningRows
+      }
+    });
+
+  } catch (error) {
+    console.error('Get Earning Details Error:', error);
+    res.status(500).json({ status: 'error', message: 'Gagal mengambil detail pendapatan' });
+  }
+};
+
+module.exports = { getWalletBalance, requestWithdrawal, getWalletTransactions, getEarningDetails };
