@@ -1,4 +1,5 @@
 const supabase = require('../config/supabase');
+const { logAudit } = require('../utils/auditLogger');
 
 // Helper: Ambil data creator spesifik berdasarkan user_id di JWT Token
 const getCreatorByUserId = async (userId) => {
@@ -107,7 +108,14 @@ exports.submitContent = async (req, res) => {
       console.error("Gagal mengupdate budget:", updateCampError);
     }
 
-    // 5. Response Berhasil
+    // 5. Audit Log (Untuk IP Tracking & Antifraud)
+    await logAudit(req, 'SUBMIT_CONTENT', 'SUBMISSION', submission.submission_id, null, { 
+      campaign_id, 
+      content_url,
+      creator_email: req.user?.email || 'unknown'
+    });
+
+    // 6. Response Berhasil
     return res.status(201).json({
       status: 'success',
       message: 'Submission diterima, sistem mengunci budget estimasi',
