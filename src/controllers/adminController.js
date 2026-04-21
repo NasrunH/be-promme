@@ -47,7 +47,38 @@ const forceCancelCampaign = async (req, res) => {
 
 // Fraud Ops
 const getAnomalies = async (req, res) => {
-    res.json({ status: 'success', data: [] });
+    try {
+        // 1. Ambil data Wallet beserta email pemiliknya
+        const { data: wallets } = await supabase.from('wallets').select(`
+            wallet_id, balance, held_balance,
+            users ( email, role )
+        `);
+
+        // 2. Ambil data Submission (kecuali yang sudah DITOLAK) beserta nama campaign & creator
+        const { data: submissions } = await supabase.from('submissions').select(`
+            submission_id, views_tervalidasi, status, created_at,
+            campaigns ( nama_campaign ),
+            creators ( nama_lengkap )
+        `).neq('status', 'DITOLAK').order('created_at', { ascending: false }).limit(50);
+
+        // 3. Ambil data Campaign yang masih berjalan/dijeda beserta nama Brand
+        const { data: campaigns } = await supabase.from('campaigns').select(`
+            campaign_id, nama_campaign, status, budget_total, budget_tersisa,
+            brands ( nama_perusahaan )
+        `).in('status', ['AKTIF', 'DIJEDA']).order('created_at', { ascending: false });
+
+        res.json({
+            status: 'success',
+            data: {
+                wallets: wallets || [],
+                submissions: submissions || [],
+                campaigns: campaigns || []
+            }
+        });
+    } catch (e) {
+        console.error("Get Anomalies Error:", e);
+        res.status(500).json({ status: 'error', message: 'Gagal mengambil data list fraud ops' });
+    }
 };
 
 const holdWalletBalance = async (req, res) => {
