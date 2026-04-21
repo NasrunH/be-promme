@@ -7,7 +7,7 @@ router.get('/users', protect(['ADMIN']), adminController.listUsers);
 router.patch('/users/:id/status', protect(['ADMIN']), adminController.updateUserStatus);
 router.patch('/kyc/:creator_id', protect(['ADMIN']), adminController.reviewKyc);
 router.patch('/campaigns/:campaign_id/fee', protect(['ADMIN']), adminController.updatePlatformFee);
-router.post('/campaigns/:campaign_id/force-cancel', protect(['ADMIN']), adminController.forceCancelCampaign);
+router.patch('/campaigns/:campaign_id/status', protect(['ADMIN']), adminController.updateCampaignStatus);
 
 // Fraud Ops
 router.get('/fraud/anomalies', protect(['ADMIN']), adminController.getAnomalies);
