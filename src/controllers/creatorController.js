@@ -326,6 +326,67 @@ const registerBankAccount = async (req, res) => {
   }
 };
 
+const getBankAccounts = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { data: creator } = await supabase.from('creators').select('id').eq('user_id', userId).single();
+    if (!creator) return res.status(404).json({ status: 'error', message: 'Creator tidak ditemukan' });
+
+    const { data, error } = await supabase
+      .from('creator_bank_accounts')
+      .select('*')
+      .eq('creator_id', creator.id)
+      .order('is_primary', { ascending: false });
+
+    if (error) throw error;
+    res.status(200).json({ status: 'success', data });
+  } catch (error) {
+    res.status(500).json({ status: 'error', message: 'Gagal mengambil daftar rekening' });
+  }
+};
+
+const updateBankAccount = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { bank_code, account_number, account_name } = req.body;
+    const userId = req.user.id;
+    
+    const { data: creator } = await supabase.from('creators').select('id').eq('user_id', userId).single();
+    
+    const { data, error } = await supabase
+      .from('creator_bank_accounts')
+      .update({ bank_code, account_number, account_name, updated_at: new Date() })
+      .eq('id', id)
+      .eq('creator_id', creator.id)
+      .select().single();
+
+    if (error) throw error;
+    res.status(200).json({ status: 'success', data });
+  } catch (error) {
+    res.status(500).json({ status: 'error', message: 'Gagal memperbarui rekening' });
+  }
+};
+
+const deleteBankAccount = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    
+    const { data: creator } = await supabase.from('creators').select('id').eq('user_id', userId).single();
+    
+    const { error } = await supabase
+      .from('creator_bank_accounts')
+      .delete()
+      .eq('id', id)
+      .eq('creator_id', creator.id);
+
+    if (error) throw error;
+    res.status(200).json({ status: 'success', message: 'Rekening berhasil dihapus' });
+  } catch (error) {
+    res.status(500).json({ status: 'error', message: 'Gagal menghapus rekening' });
+  }
+};
+
 // 4. SETUP 2FA
 const setup2FA = async (req, res) => {
   try {
@@ -377,4 +438,8 @@ const verify2FA = async (req, res) => {
 };
 
 
-module.exports = { submitKYC, connectSocialAccount, registerBankAccount, setup2FA, verify2FA, getProfile };
+module.exports = { 
+  submitKYC, connectSocialAccount, registerBankAccount, 
+  getBankAccounts, updateBankAccount, deleteBankAccount,
+  setup2FA, verify2FA, getProfile 
+};

@@ -17,4 +17,10 @@ router.patch('/submissions/:submission_id/invalidate', protect(['ADMIN']), admin
 
 router.get('/audit-logs', protect(['ADMIN']), adminController.getAuditLogs);
 
+// Settings
+router.get('/settings', protect(['ADMIN']), adminController.getSettings);
+router.patch('/settings', protect(['ADMIN']), adminController.updateSettings);
+
+router.patch('/submissions/:submission_id/approve', protect(['ADMIN']), adminController.approveSubmission);
+
 module.exports = router;

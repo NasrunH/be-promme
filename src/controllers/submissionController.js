@@ -1,5 +1,6 @@
 const supabase = require('../config/supabase');
 const { logAudit } = require('../utils/auditLogger');
+const { scrapeViews } = require('../services/scraperService');
 
 // Helper: Ambil data creator spesifik berdasarkan user_id di JWT Token
 const getCreatorByUserId = async (userId) => {
@@ -71,6 +72,21 @@ exports.submitContent = async (req, res) => {
        throw new Error(`Campaign saat ini berstatus ${campaign.status}. Anda tidak dapat melakukan submission.`);
     }
 
+    // 4.5 Validasi Platform URL
+    const p = campaign.platform?.toUpperCase();
+    const url = content_url?.toLowerCase();
+    let isMatch = false;
+    if (p === 'YOUTUBE' && (url.includes('youtube.com') || url.includes('youtu.be'))) isMatch = true;
+    else if (p === 'TIKTOK' && url.includes('tiktok.com')) isMatch = true;
+    else if (p === 'INSTAGRAM' && url.includes('instagram.com')) isMatch = true;
+
+    if (!isMatch) {
+      return res.status(400).json({ 
+        status: 'error', 
+        message: `URL tidak valid. Campaign ini hanya menerima konten dari ${campaign.platform}.` 
+      });
+    }
+
     // 5. Cek batas max submission per creator
     const { count: existingSubmissions } = await supabase
       .from('submissions')
@@ -94,7 +110,19 @@ exports.submitContent = async (req, res) => {
         throw new Error('Budget campaign tidak mencukupi untuk menerima submission baru saat ini.');
     }
 
-    // 7. Insert Submission
+    // 7. Penarikan Views Pertama Kali (Instant Tracking)
+    let initialViews = 0;
+    try {
+      initialViews = await scrapeViews(content_url, campaign.platform) || 0;
+    } catch (err) {
+      console.error("[SUBMIT] Initial scraping failed:", err.message);
+    }
+
+    // 8. Hitung Komisi Berdasarkan Views Awal
+    // Komisi dihitung per kelipatan 1000 views
+    const grossEarning = Math.floor(initialViews / 1000) * campaign.komisi_per_view;
+    
+    // 9. Insert Submission
     const { data: submission, error: subError } = await supabase
       .from('submissions')
       .insert([{
@@ -103,7 +131,10 @@ exports.submitContent = async (req, res) => {
         connected_account_id: connected_account_id || null,
         content_url: content_url,
         status: 'PENDING',
-        estimasi_komisi: estimasiKomisi
+        views_tervalidasi: initialViews,
+        estimasi_komisi: estimasiKomisi,
+        gross_earning: grossEarning,
+        net_earning: grossEarning // Sementara asumsi fee 0 atau sudah dipotong
       }])
       .select()
       .single();

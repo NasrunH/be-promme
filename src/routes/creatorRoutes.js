@@ -24,6 +24,9 @@ router.post('/kyc',
 router.get('/profile', protect(['CREATOR']), creatorController.getProfile);
 router.post('/social-accounts/connect', protect(['CREATOR']), creatorController.connectSocialAccount);
 router.post('/bank-accounts', protect(['CREATOR']), creatorController.registerBankAccount);
+router.get('/bank-accounts', protect(['CREATOR']), creatorController.getBankAccounts);
+router.patch('/bank-accounts/:id', protect(['CREATOR']), creatorController.updateBankAccount);
+router.delete('/bank-accounts/:id', protect(['CREATOR']), creatorController.deleteBankAccount);
 router.post('/2fa/setup', protect(['CREATOR']), creatorController.setup2FA);
 router.post('/2fa/verify', protect(['CREATOR']), creatorController.verify2FA);
 

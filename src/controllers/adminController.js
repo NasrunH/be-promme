@@ -277,10 +277,17 @@ const getAnomalies = async (req, res) => {
         }
 
         // --- PART 2: LIST DATA FOR BROWSING ---
-        const { data: wallets } = await supabase.from('wallets').select('wallet_id, balance, hold_balance, creators(nama_lengkap, users(id, email, role, status))');
-        const { data: submissions } = await supabase.from('submissions').select('submission_id, views_tervalidasi, status, created_at, campaigns(nama_campaign), creators(nama_lengkap), content_url').order('created_at', { ascending: false }).limit(100);
-        const { data: campaigns } = await supabase.from('campaigns').select('campaign_id, nama_campaign, status, budget_total, budget_tersisa, brands(nama_perusahaan, user_id, users(status))').order('created_at', { ascending: false });
-        const { data: brandsList } = await supabase.from('brands').select('id, nama_perusahaan, pic_name, user_id, users(email, status)');
+        const { data: wallets, error: walErr } = await supabase.from('wallets').select('wallet_id, balance, hold_balance, creators(nama_lengkap, users(id, email, role, status))');
+        if (walErr) console.error("[GET_ANOMALIES] Wallet Error:", walErr);
+
+        const { data: submissions, error: subErr } = await supabase.from('submissions').select('submission_id, views_tervalidasi, status, submitted_at, campaigns(nama_campaign), creators(nama_lengkap), content_url').order('submitted_at', { ascending: false }).limit(100);
+        if (subErr) console.error("[GET_ANOMALIES] Submission Error:", subErr);
+
+        const { data: campaigns, error: campErr } = await supabase.from('campaigns').select('campaign_id, nama_campaign, status, budget_total, budget_tersisa, brands(nama_perusahaan, user_id, users(status))').order('created_at', { ascending: false });
+        if (campErr) console.error("[GET_ANOMALIES] Campaign Error:", campErr);
+
+        const { data: brandsList, error: brandErr } = await supabase.from('brands').select('id, nama_perusahaan, pic_name, user_id, users(email, status)');
+        if (brandErr) console.error("[GET_ANOMALIES] Brand Error:", brandErr);
 
         res.json({
             status: 'success',
@@ -461,6 +468,81 @@ const releaseWalletBalance = async (req, res) => {
     }
 };
 
+const approveSubmission = async (req, res) => {
+    try {
+        const body = req.body || {};
+        const params = req.params || {};
+        const submissionId = params.submission_id || params.id || body.submission_id || body.id;
+
+        if (!submissionId) {
+            return res.status(400).json({ status: 'error', message: 'ID Submission wajib diisi' });
+        }
+
+        // 1. Ambil data submission + wallet creator
+        const { data: sub, error: fetchErr } = await supabase
+            .from('submissions')
+            .select('*, creators(id, wallets(*))')
+            .eq('submission_id', submissionId)
+            .maybeSingle();
+
+        if (fetchErr || !sub) return res.status(404).json({ status: 'error', message: 'Submission tidak ditemukan' });
+        if (sub.status === 'SELESAI') return res.status(400).json({ status: 'error', message: 'Submission ini sudah disetujui & dibayar' });
+        if (sub.status === 'DITOLAK') return res.status(400).json({ status: 'error', message: 'Submission ini sudah ditolak' });
+
+        const amountToPay = parseInt(sub.net_earning) || 0;
+        const wallet = sub.creators?.wallets;
+
+        if (!wallet) return res.status(404).json({ status: 'error', message: 'Dompet creator tidak ditemukan' });
+
+        // 2. Update status submission jadi SELESAI
+        const { error: updSubErr } = await supabase
+            .from('submissions')
+            .update({ status: 'SELESAI', updated_at: new Date().toISOString() })
+            .eq('submission_id', submissionId);
+        
+        if (updSubErr) throw updSubErr;
+
+        // 3. Tambah Saldo ke Wallet
+        const newBalance = (parseInt(wallet.balance) || 0) + amountToPay;
+        const newTotalEarned = (parseInt(wallet.total_earned) || 0) + amountToPay;
+
+        const { error: updWalletErr } = await supabase
+            .from('wallets')
+            .update({ 
+                balance: newBalance, 
+                total_earned: newTotalEarned,
+                last_transaction: new Date().toISOString(),
+                version: (wallet.version || 0) + 1
+            })
+            .eq('wallet_id', wallet.wallet_id);
+        
+        if (updWalletErr) throw updWalletErr;
+
+        // 4. Catat Transaksi Dompet
+        const { error: txErr } = await supabase.from('wallet_transactions').insert({
+            wallet_id: wallet.wallet_id,
+            type: 'EARNING',
+            amount: amountToPay,
+            reference_id: submissionId,
+            idempotency_key: `PAYOUT-${submissionId}`
+        });
+
+        if (txErr) console.error("Gagal mencatat transaksi dompet (tapi saldo sudah masuk):", txErr);
+
+        try {
+            await logAudit(req, 'APPROVE_SUBMISSION', 'SUBMISSION', submissionId, { status: sub.status }, { status: 'SELESAI', payout: amountToPay });
+        } catch (logErr) {
+            console.error("Audit log error:", logErr);
+        }
+
+        res.json({ status: 'success', message: 'Submission disetujui dan saldo telah dikirim ke dompet creator' });
+
+    } catch (e) {
+        console.error("Approve Submission Error:", e);
+        res.status(500).json({ status: 'error', message: e.message || 'Gagal menyetujui submission' });
+    }
+};
+
 const invalidateSubmission = async (req, res) => {
     try {
         const body = req.body || {};
@@ -503,6 +585,47 @@ const invalidateSubmission = async (req, res) => {
     }
 };
 
+const getSettings = async (req, res) => {
+    try {
+        const { data, error } = await supabase.from('system_settings').select('*');
+        if (error) throw error;
+        
+        // Convert array to object for easier use in frontend
+        const settings = {};
+        data.forEach(s => { settings[s.key] = s.value; });
+        
+        res.json({ status: 'success', data: settings });
+    } catch (e) {
+        console.error("Get Settings Error:", e);
+        res.status(500).json({ status: 'error', message: e.message });
+    }
+};
+
+const updateSettings = async (req, res) => {
+    try {
+        const body = req.body || {};
+        const updates = Object.entries(body);
+        
+        for (const [key, value] of updates) {
+            const { error } = await supabase
+                .from('system_settings')
+                .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+            if (error) throw error;
+        }
+
+        try {
+            await logAudit(req, 'UPDATE_SYSTEM_SETTINGS', 'SYSTEM', 'GLOBAL', null, body);
+        } catch (logErr) {
+            console.error("Audit log error:", logErr);
+        }
+
+        res.json({ status: 'success', message: 'Pengaturan sistem berhasil diperbarui' });
+    } catch (e) {
+        console.error("Update Settings Error:", e);
+        res.status(500).json({ status: 'error', message: e.message });
+    }
+};
+
 const getAuditLogs = async (req, res) => {
     try {
         const { data, error } = await supabase.from('audit_logs').select('*').order('created_at', { ascending: false });
@@ -515,5 +638,6 @@ const getAuditLogs = async (req, res) => {
 
 module.exports = {
     listUsers, updateUserStatus, reviewKyc, updatePlatformFee, updateCampaignStatus,
-    getAnomalies, holdWalletBalance, releaseWalletBalance, invalidateSubmission, getAuditLogs
-};
+    getAnomalies, holdWalletBalance, releaseWalletBalance, invalidateSubmission, getAuditLogs,
+    getSettings, updateSettings, approveSubmission
+};

@@ -2,11 +2,35 @@ const cron = require('node-cron');
 const supabase = require('../config/supabase');
 const { scrapeViews } = require('../services/scraperService');
 
+let isRunning = false;
+let lastRunTimestamp = 0;
+
 // Fungsi utama penarik traffic
 const runTrafficTracker = async () => {
-  console.log('[JOBS] Traffic Tracker started...');
+  if (isRunning) return;
+  isRunning = true;
+
   try {
-    // 1. Ambil semua submission berstatus PENDING (sertakan relasi campaigns untuk budget)
+    // 1. Ambil Pengaturan Frekuensi (Default 1 menit jika tidak ada)
+    const { data: settings } = await supabase
+      .from('system_settings')
+      .select('value')
+      .eq('key', 'tracker_frequency')
+      .maybeSingle();
+    
+    const frequency = parseInt(settings?.value || '1');
+    const now = Date.now();
+
+    // Cek apakah sudah waktunya jalan berdasarkan frekuensi
+    if (now - lastRunTimestamp < (frequency * 60000)) {
+       isRunning = false;
+       return;
+    }
+
+    console.log(`[JOBS] Traffic Tracker started (Frequency: ${frequency} min)...`);
+    lastRunTimestamp = now;
+
+    // 2. Ambil semua submission berstatus PENDING (sertakan relasi campaigns untuk budget)
     const { data: submissions, error: subErr } = await supabase
       .from('submissions')
       .select('submission_id, campaign_id, content_url, views_tervalidasi, net_earning, status, submitted_at, campaigns(campaign_id, platform, komisi_per_view, budget_tersisa)')
@@ -28,18 +52,16 @@ const runTrafficTracker = async () => {
       // Jika budget sudah 0, jangan update nilai uang lagi
       if (currentBudgetTersisa <= 0) continue;
 
-      // 2. Scrape data langsung dari URL
+      // 2. Scrape data langsung dari URL (API)
       let realViews = await scrapeViews(sub.content_url, platform);
       
-      // 3. Fallback / Simulasi Realistis
+      // Jika gagal mengambil data (API limit atau URL salah), jangan lakukan update views (biarkan nilai lama)
       if (realViews === null) {
-        const minutesElapsed = Math.floor((new Date() - new Date(sub.submitted_at)) / 60000);
-        // Simulasi pertumbuhan views
-        const simulatedGrowth = minutesElapsed * (Math.floor(Math.random() * 15) + 1);
-        realViews = Math.max((sub.views_tervalidasi || 0), simulatedGrowth + 100); 
+        console.log(`[JOBS] Skipping ${sub.submission_id}: Gagal mengambil real views dari API.`);
+        continue;
       }
 
-      // Pastikan views selalu naik
+      // Pastikan views selalu naik (untuk menghindari fluktuasi API)
       if (realViews > (sub.views_tervalidasi || 0)) {
         
         // PERHITUNGAN BARU: komisi per 1000 views (CPM)
@@ -97,8 +119,9 @@ const runTrafficTracker = async () => {
               .update(campaignUpdateData)
               .eq('campaign_id', campaign.campaign_id);
           }
-        } else {
-           // Jika views naik tapi uang tidak berubah (karena belum capai kelipatan 1000)
+        } else if (realViews > (sub.views_tervalidasi || 0)) {
+           // Jika views naik (tapi tidak merubah saldo karena belum kelipatan 1000)
+           // tetap update views agar di dashboard terlihat progressnya
            await supabase
             .from('submissions')
             .update({ views_tervalidasi: realViews, updated_at: new Date().toISOString() })
