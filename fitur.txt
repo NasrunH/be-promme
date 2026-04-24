@@ -1,0 +1,73 @@
+Daftar Fitur Lengkap Berdasarkan Role Pengguna
+Sistem Affiliate Marketing & Creator Monetization (v1.0.0)
+1. FITUR BRAND (Pembuat Kampanye)
+Brand adalah perusahaan atau individu yang mengeluarkan dana untuk promosi.
+A. Autentikasi & Akun
+Registrasi & Login Brand: Mendaftar menggunakan email perusahaan dan profil PIC.
+Manajemen Profil: Mengubah detail perusahaan, logo, dan kontak.
+B. Manajemen Campaign (Kampanye)
+Buat Campaign Baru: Menentukan nama, platform (YouTube/TikTok/IG/Web), komisi per view, durasi tonton minimal, dan batas waktu kampanye.
+Set Limit Pengeluaran: Mengatur daily_spend_limit (batas pengeluaran harian) dan max_submission_per_creator.
+Kelola Status Campaign: Menyimpan sebagai Draft, Mempublikasikan (Aktif), Menjeda (Pause), Melanjutkan (Resume), atau Membatalkan (Cancel) campaign.
+Klaim Refund: Menarik sisa dana (budget_tersisa) jika campaign dibatalkan atau waktu berakhir tanpa ada yang submit.
+C. Keuangan & Budgeting
+Top-up Budget: Menambah dana campaign menggunakan Payment Gateway (Midtrans Snap) dengan dukungan VA Bank, e-Wallet (GoPay, OVO, dll), dan Kartu Kredit.
+Monitoring Budget Real-time: Melihat rincian budget_total, budget_tersisa (sisa dana), budget_tereservasi (dana terkunci untuk validasi), dan budget_terpakai (dana sukses dibayar).
+D. Dashboard & Laporan
+Dashboard Performa: Melihat metrik real-time seperti Total Views Tervalidasi, Total Submission, Jumlah Creator Aktif, dan Pengeluaran Harian.
+Analitik Campaign: Melihat Cost Per View (CPV) efektif.
+Notifikasi Brand: Menerima alert via email/dashboard jika budget < 20%, budget habis, atau limit harian tercapai.
+2. FITUR CREATOR (Promotor / Afiliator)
+Creator adalah pengguna yang mempromosikan link dan mendapatkan komisi.
+A. Autentikasi & Keamanan
+Registrasi & Login Creator: Mendaftar menggunakan email.
+Setup 2FA (Two-Factor Authentication): Mengaktifkan 2FA via Google Authenticator (Wajib diaktifkan sebelum bisa menarik dana/withdraw).
+B. Onboarding & Verifikasi (Sangat Krusial)
+Verifikasi KYC: Mengunggah foto KTP, foto Selfie, NIK, dan NPWP (opsional, untuk tarif pajak).
+Hubungkan Akun Sosial Media (OAuth): Menautkan channel YouTube, TikTok, atau Instagram. Sistem akan menyimpan ID unik channel untuk memastikan video yang di-submit benar-benar milik Creator.
+Manajemen Rekening Bank: Mendaftarkan nomor rekening bank untuk pencairan dana. (Sistem akan memvalidasi agar nama rekening = nama KTP).
+C. Pencarian & Submission Campaign
+Eksplorasi Campaign: Mencari dan melihat daftar campaign yang sedang aktif, detail komisi, dan syarat durasi tonton.
+Submit Konten (URL): Mengirimkan link video promosi. Constraint: Sistem akan menolak jika URL video tidak berasal dari Akun Sosial Media yang sudah dihubungkan.
+Tracking Submission: Melacak status submission (Pending, Validasi, Menghitung, Selesai, Ditolak).
+Detail Penolakan: Melihat alasan spesifik jika konten ditolak (misal: "Durasi tonton kurang", "Video dihapus", atau "Terindikasi Bot").
+D. Wallet & Penarikan Dana (Withdrawal)
+Dompet Digital (Wallet): Melihat Saldo Aktif (balance), Saldo Tertahan/Dalam Proses (pending_balance), dan Total Pendapatan.
+Tarik Dana (Withdraw): Mengajukan pencairan komisi ke rekening bank menggunakan Midtrans Iris (Minimal Rp 50.000).
+Riwayat Transaksi: Melihat buku besar (ledger) semua komisi yang masuk dan ditarik.
+3. FITUR ADMIN PLATFORM & FRAUD OPS
+Tim internal yang menjaga keberlangsungan sistem dan mencegah kecurangan.
+A. Manajemen Pengguna & KYC
+Daftar Pengguna: Melihat seluruh data Brand dan Creator terdaftar.
+Review KYC Manual: Menyetujui atau menolak dokumen KYC jika sistem otomatis (pihak ketiga) gagal membaca dokumen.
+Manajemen Status Akun: Mengubah status akun Creator (Normal, Flagged, Under Review, Suspended, Banned).
+B. Pengaturan Sistem (God Mode)
+Atur Platform Fee: Mengubah persentase potongan sistem (misal: default 10%) secara global atau khusus untuk campaign tertentu.
+Intervensi Campaign: Mematikan paksa (Force Pause/Cancel) campaign milik Brand jika melanggar syarat dan ketentuan platform.
+C. Manajemen Fraud & Dispute (Fraud Ops)
+Dashboard Anomali: Melihat daftar submission atau Creator yang di-flag oleh sistem (karena IP ganda, device fingerprint mencurigakan, dll).
+Tahan Saldo (Dispute Hold): Membekukan saldo Creator dari balance menjadi hold_balance selama masa investigasi.
+Lepas/Tarik Saldo: Mengembalikan saldo jika Creator terbukti tidak bersalah (Release), atau menghanguskan saldo jika terbukti fraud (Adjustment Debit).
+Invalidasi Konten: Menolak submission secara manual yang lolos dari deteksi bot, beserta opsi mengembalikan budget ke Brand (reversal).
+D. Audit & Keamanan
+Audit Logs Viewer: Melihat riwayat segala aksi (Siapa melakukan Apa dan Kapan). Data ini bersifat immutable (tidak bisa dihapus/diubah).
+4. FITUR FINANCE OPS (Operasional Keuangan)
+Tim internal yang mengurus rekonsiliasi uang, perpajakan, dan pencairan dana besar.
+A. Manajemen Pencairan (Withdrawal)
+Approval Withdrawal Besar: Menyetujui secara manual permintaan penarikan dana di atas batas tertentu (misal: > Rp 10.000.000) sebelum diteruskan ke Midtrans Iris.
+Monitor Kegagalan Transfer: Menangani kasus di mana bank tujuan menolak transfer (reversal manual jika sistem otomatis gagal).
+B. Manajemen Pajak (PPh 23)
+Kalkulator PPh 23: Sistem menyediakan laporan penghasilan kotor (Gross Earning) Creator untuk dihitung pajaknya (2% jika ada NPWP, 4% jika tidak ada).
+Ekspor Data e-Billing: Mengunduh data CSV untuk kebutuhan pelaporan pajak ke DJP (Direktorat Jenderal Pajak) secara manual.
+C. Rekonsiliasi & Laporan Keuangan
+Laporan GMV (Gross Merchandise Value): Melihat perputaran total uang dari Brand ke Platform.
+Laporan Pendapatan Platform: Melihat total Platform Fee yang berhasil dikumpulkan dalam periode tertentu.
+Rekonsiliasi Midtrans: Mencocokkan data transaksi di database platform dengan data yang ada di Dashboard Midtrans.
+5. FITUR SISTEM OTOMATIS (BOT / BACKGROUND WORKER)
+Bukan berupa UI/UX, melainkan mesin yang bekerja di balik layar berdasarkan aturan PRD.
+Budget Reservation Engine: Mengunci dana sekian detik setelah Creator klik "Submit" untuk mencegah over-budget.
+Third-Party API Crawler: Bot yang secara berkala memanggil API YouTube/TikTok/IG untuk mengambil data View dan durasi tonton.
+Anti-Fraud Engine: Mengecek alamat IP, Device Fingerprint (FingerprintJS), dan Velocity (kecepatan submit) untuk menandai trafik bot/VPN.
+Daily Scheduler: Cron job yang berjalan pada pukul 00:00 WIB untuk mereset batas pengeluaran harian (daily_spend_limit).
+Idempotency Checker: Memastikan tidak ada pembayaran ganda (double spend) meskipun terjadi klik berkali-kali atau jaringan putus.
+

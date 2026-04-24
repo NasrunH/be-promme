@@ -1,14 +1,14 @@
 const express = require('express');
 const router = express.Router();
-const { registerBrand, registerCreator, login } = require('../controllers/authController');
+const authController = require('../controllers/authController');
 
-// 1.1 Registrasi Brand
-router.post('/register/brand', registerBrand);
+// URL: /api/v1/auth/register/brand
+router.post('/register/brand', authController.registerBrand);
 
-// 1.2 Registrasi Creator
-router.post('/register/creator', registerCreator);
+// URL: /api/v1/auth/register/creator
+router.post('/register/creator', authController.registerCreator);
 
-// Login
-router.post('/login', login);
+// URL: /api/v1/auth/login
+router.post('/login', authController.login);
 
 module.exports = router;

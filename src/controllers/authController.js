@@ -1,120 +1,130 @@
 const supabase = require('../config/supabase');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
 require('dotenv').config();
 
-// 1.1 Registrasi Brand
+// Helper to handle user deletion on failure (Manual Rollback)
+const rollbackUser = async (userId) => {
+  await supabase.from('users').delete().eq('id', userId);
+};
+
+// 1. REGISTRASI BRAND
 const registerBrand = async (req, res) => {
+  let userId = null;
   try {
     const { email, password, nama_perusahaan, pic_name, phone_number } = req.body;
 
     if (!email || !password || !nama_perusahaan || !pic_name) {
-      return res.status(400).json({ message: 'Email, password, nama perusahaan, dan PIC wajib diisi' });
+      return res.status(400).json({ status: 'error', message: 'Email, password, nama perusahaan, dan PIC wajib diisi' });
     }
 
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(password, salt);
+    // Hash Password
+    const passwordHash = await bcrypt.hash(password, 10);
 
-    const { data: newUser, error: userError } = await supabase
+    // Insert to Users
+    const { data: user, error: userError } = await supabase
       .from('users')
-      .insert([{ 
-        email, 
-        password_hash: passwordHash, 
-        role: 'BRAND', 
-        status: 'ACTIVE' 
-      }])
-      .select('id')
-      .single();
+      .insert([{ email, password_hash: passwordHash, role: 'BRAND' }])
+      .select().single();
 
-    if (userError) throw userError;
+    if (userError) return res.status(400).json({ status: 'error', message: 'Email sudah digunakan atau database error' });
+    userId = user.id;
 
-    const { data: newBrand, error: brandError } = await supabase
+    // Insert to Brands
+    const { data: brand, error: brandError } = await supabase
       .from('brands')
-      .insert([{
-        user_id: newUser.id,
-        nama_perusahaan,
-        pic_name,
-        phone_number: phone_number || ''
+      .insert([{ 
+        user_id: userId, 
+        nama_perusahaan, 
+        pic_name, 
+        phone_number 
       }])
-      .select('id')
-      .single();
+      .select().single();
 
-    if (brandError) throw brandError;
+    if (brandError) {
+      await rollbackUser(userId);
+      throw brandError;
+    }
 
     res.status(201).json({
-      status: "success",
-      message: "Registrasi Brand berhasil",
+      status: 'success',
+      message: 'Registrasi Brand berhasil',
       data: {
-        user_id: newUser.id,
-        brand_id: newBrand.id
+        user_id: userId,
+        brand_id: brand.id
       }
     });
+
   } catch (error) {
-    res.status(500).json({ status: 'error', message: error.message });
+    if (userId) await rollbackUser(userId);
+    console.error('Register Brand Error:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error' });
   }
 };
 
-// 1.2 Registrasi Creator
+// 2. REGISTRASI CREATOR
 const registerCreator = async (req, res) => {
+  let userId = null;
   try {
     const { email, password, nama_lengkap } = req.body;
 
     if (!email || !password || !nama_lengkap) {
-      return res.status(400).json({ message: 'Email, password, dan nama lengkap wajib diisi' });
+      return res.status(400).json({ status: 'error', message: 'Email, password, dan nama lengkap wajib diisi' });
     }
 
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(password, salt);
+    const passwordHash = await bcrypt.hash(password, 10);
 
-    const { data: newUser, error: userError } = await supabase
+    const { data: user, error: userError } = await supabase
       .from('users')
-      .insert([{ 
-        email, 
-        password_hash: passwordHash, 
-        role: 'CREATOR', 
-        status: 'ACTIVE' 
-      }])
-      .select('id')
-      .single();
+      .insert([{ email, password_hash: passwordHash, role: 'CREATOR' }])
+      .select().single();
 
-    if (userError) throw userError;
+    if (userError) return res.status(400).json({ status: 'error', message: 'Email sudah digunakan' });
+    userId = user.id;
 
-    const { data: newCreator, error: creatorError } = await supabase
+    // Insert to Creators
+    const { data: creator, error: creatorError } = await supabase
       .from('creators')
-      .insert([{
-        user_id: newUser.id,
-        nama_lengkap,
-        kyc_status: 'UNVERIFIED'
-      }])
-      .select('id')
-      .single();
+      .insert([{ user_id: userId, nama_lengkap }])
+      .select().single();
 
-    if (creatorError) throw creatorError;
+    if (creatorError) {
+      await rollbackUser(userId);
+      throw creatorError;
+    }
 
-    await supabase.from('wallets').insert([{ creator_id: newCreator.id }]);
+    // Insert to Wallets (FIX: Use creator.id, NOT userId)
+    const { error: walletError } = await supabase
+      .from('wallets')
+      .insert([{ creator_id: creator.id }]);
+
+    if (walletError) {
+      // In complex systems, we might want to delete creator too, but let's keep it simple
+      await supabase.from('creators').delete().eq('id', creator.id);
+      await rollbackUser(userId);
+      throw walletError;
+    }
 
     res.status(201).json({
-      status: "success",
-      message: "Registrasi Creator berhasil",
+      status: 'success',
+      message: 'Registrasi Creator berhasil',
       data: {
-        user_id: newUser.id,
-        creator_id: newCreator.id
+        user_id: userId,
+        creator_id: creator.id
       }
     });
+
   } catch (error) {
-    res.status(500).json({ status: 'error', message: error.message });
+    if (userId) await rollbackUser(userId);
+    console.error('Register Creator Error:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error' });
   }
 };
 
-// 1.3 Login User
+// 3. LOGIN
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ message: 'Email dan password wajib diisi' });
-    }
 
     const { data: user, error } = await supabase
       .from('users')
@@ -123,40 +133,34 @@ const login = async (req, res) => {
       .single();
 
     if (error || !user) {
-      return res.status(401).json({ message: 'Email atau password salah' });
+      return res.status(401).json({ status: 'error', message: 'Email atau password salah' });
     }
 
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
-      return res.status(401).json({ message: 'Email atau password salah' });
+      return res.status(401).json({ status: 'error', message: 'Email atau password salah' });
     }
 
-    // Generate Access Token (Expires in 15 minutes / 900 seconds)
-    const accessToken = jwt.sign(
-      { id: user.id, role: user.role },
-      process.env.JWT_SECRET || 'secret_key_promme',
-      { expiresIn: '15m' }
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role }, 
+      process.env.JWT_SECRET || 'secret_key_promme', 
+      { expiresIn: '1d' }
     );
 
-    // Generate Refresh Token (Longer lived, e.g., 7 days)
-    const refreshToken = crypto.randomBytes(40).toString('hex');
-
-    // Update last login
     await supabase.from('users').update({ last_login_at: new Date() }).eq('id', user.id);
 
-    res.status(200).json({
-      status: "success",
+    res.json({
+      status: 'success',
       data: {
-        access_token: accessToken,
-        refresh_token: refreshToken,
+        access_token: token,
+        refresh_token: "dummy_refresh_token", // In real apps, implement refresh token logic
         role: user.role,
-        expires_in: 900
+        expires_in: 86400
       }
     });
 
   } catch (error) {
-    console.error('Login Error:', error);
-    res.status(500).json({ status: 'error', message: 'Terjadi kesalahan server' });
+    res.status(500).json({ status: 'error', message: 'Internal server error' });
   }
 };
 

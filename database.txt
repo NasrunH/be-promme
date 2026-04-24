@@ -1,0 +1,270 @@
+-- postgres.public.audit_logs definition
+
+-- Drop table
+
+-- DROP TABLE postgres.public.audit_logs;
+
+CREATE TABLE postgres.public.audit_logs (
+	log_id uuid DEFAULT gen_random_uuid() NOT NULL,
+	actor_id uuid,
+	actor_type varchar(50),
+	"action" varchar(100),
+	entity_type varchar(50),
+	entity_id uuid,
+	old_data jsonb,
+	new_data jsonb,
+	ip_address varchar(45),
+	created_at timestamptz DEFAULT now(),
+	CONSTRAINT audit_logs_pkey PRIMARY KEY (log_id)
+);
+
+
+-- postgres.public.users definition
+
+-- Drop table
+
+-- DROP TABLE postgres.public.users;
+
+CREATE TABLE postgres.public.users (
+	id uuid DEFAULT gen_random_uuid() NOT NULL,
+	email varchar(255) NOT NULL,
+	password_hash varchar(255) NOT NULL,
+	"role" userrole NOT NULL,
+	status userstatus DEFAULT 'ACTIVE'::userstatus,
+	last_login_at timestamptz,
+	created_at timestamptz DEFAULT now(),
+	updated_at timestamptz DEFAULT now(),
+	CONSTRAINT users_pkey PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX users_email_key ON postgres.public.users (email);
+
+
+-- postgres.public.brands definition
+
+-- Drop table
+
+-- DROP TABLE postgres.public.brands;
+
+CREATE TABLE postgres.public.brands (
+	id uuid DEFAULT gen_random_uuid() NOT NULL,
+	user_id uuid NOT NULL,
+	nama_perusahaan varchar(255) NOT NULL,
+	pic_name varchar(255) NOT NULL,
+	phone_number varchar(50),
+	CONSTRAINT brands_pkey PRIMARY KEY (id),
+	CONSTRAINT brands_user_id_fkey FOREIGN KEY (user_id) REFERENCES postgres.public.users(id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX brands_user_id_key ON postgres.public.brands (user_id);
+
+
+-- postgres.public.campaigns definition
+
+-- Drop table
+
+-- DROP TABLE postgres.public.campaigns;
+
+CREATE TABLE postgres.public.campaigns (
+	campaign_id uuid DEFAULT gen_random_uuid() NOT NULL,
+	brand_id uuid NOT NULL,
+	nama_campaign varchar(255) NOT NULL,
+	budget_total int8 NOT NULL,
+	budget_tersisa int8 DEFAULT 0 NOT NULL,
+	budget_tereservasi int8 DEFAULT 0 NOT NULL,
+	budget_terpakai int8 DEFAULT 0 NOT NULL,
+	daily_spend_limit int8,
+	daily_spent_today int8 DEFAULT 0,
+	platform platformtipe NOT NULL,
+	komisi_per_view int8 NOT NULL,
+	platform_fee_pct int2 DEFAULT 1000,
+	min_watch_duration int4 NOT NULL,
+	max_submission_per_creator int4 DEFAULT 1,
+	tanggal_mulai timestamptz NOT NULL,
+	tanggal_berakhir timestamptz NOT NULL,
+	status campaignstatus DEFAULT 'DRAFT'::campaignstatus,
+	created_at timestamptz DEFAULT now(),
+	updated_at timestamptz DEFAULT now(),
+	CONSTRAINT campaigns_pkey PRIMARY KEY (campaign_id),
+	CONSTRAINT campaigns_brand_id_fkey FOREIGN KEY (brand_id) REFERENCES postgres.public.brands(id)
+);
+
+
+-- postgres.public.creators definition
+
+-- Drop table
+
+-- DROP TABLE postgres.public.creators;
+
+CREATE TABLE postgres.public.creators (
+	id uuid DEFAULT gen_random_uuid() NOT NULL,
+	user_id uuid NOT NULL,
+	nama_lengkap varchar(255) NOT NULL,
+	kyc_status kycstatus DEFAULT 'UNVERIFIED'::kycstatus,
+	nik varchar(16),
+	npwp varchar(20),
+	kyc_verified_at timestamptz,
+	CONSTRAINT creators_pkey PRIMARY KEY (id),
+	CONSTRAINT creators_user_id_fkey FOREIGN KEY (user_id) REFERENCES postgres.public.users(id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX creators_nik_key ON postgres.public.creators (nik);
+CREATE UNIQUE INDEX creators_user_id_key ON postgres.public.creators (user_id);
+
+
+-- postgres.public.topup_transactions definition
+
+-- Drop table
+
+-- DROP TABLE postgres.public.topup_transactions;
+
+CREATE TABLE postgres.public.topup_transactions (
+	topup_id uuid DEFAULT gen_random_uuid() NOT NULL,
+	campaign_id uuid NOT NULL,
+	order_id varchar(100) NOT NULL,
+	gross_amount int8 NOT NULL,
+	status transaksistatus DEFAULT 'PENDING'::transaksistatus,
+	snap_token varchar(255),
+	payment_type varchar(50),
+	created_at timestamptz DEFAULT now(),
+	updated_at timestamptz DEFAULT now(),
+	CONSTRAINT topup_transactions_pkey PRIMARY KEY (topup_id),
+	CONSTRAINT topup_transactions_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES postgres.public.campaigns(campaign_id)
+);
+CREATE UNIQUE INDEX topup_transactions_order_id_key ON postgres.public.topup_transactions (order_id);
+
+
+-- postgres.public.wallets definition
+
+-- Drop table
+
+-- DROP TABLE postgres.public.wallets;
+
+CREATE TABLE postgres.public.wallets (
+	wallet_id uuid DEFAULT gen_random_uuid() NOT NULL,
+	creator_id uuid NOT NULL,
+	balance int8 DEFAULT 0 NOT NULL,
+	pending_balance int8 DEFAULT 0 NOT NULL,
+	hold_balance int8 DEFAULT 0 NOT NULL,
+	total_earned int8 DEFAULT 0 NOT NULL,
+	total_withdrawn int8 DEFAULT 0 NOT NULL,
+	"version" int4 DEFAULT 1,
+	last_transaction timestamptz,
+	CONSTRAINT wallets_pkey PRIMARY KEY (wallet_id),
+	CONSTRAINT wallets_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES postgres.public.creators(id)
+);
+CREATE UNIQUE INDEX wallets_creator_id_key ON postgres.public.wallets (creator_id);
+
+
+-- postgres.public.connected_social_accounts definition
+
+-- Drop table
+
+-- DROP TABLE postgres.public.connected_social_accounts;
+
+CREATE TABLE postgres.public.connected_social_accounts (
+	id uuid DEFAULT gen_random_uuid() NOT NULL,
+	creator_id uuid NOT NULL,
+	platform platformtipe NOT NULL,
+	platform_account_id varchar(255) NOT NULL,
+	username varchar(255),
+	status socialaccountstatus DEFAULT 'PENDING'::socialaccountstatus,
+	access_token text,
+	refresh_token text,
+	token_expires_at timestamptz,
+	created_at timestamptz DEFAULT now(),
+	updated_at timestamptz DEFAULT now(),
+	CONSTRAINT connected_social_accounts_pkey PRIMARY KEY (id),
+	CONSTRAINT connected_social_accounts_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES postgres.public.creators(id)
+);
+CREATE UNIQUE INDEX connected_social_accounts_creator_id_platform_platform_acco_key ON postgres.public.connected_social_accounts (creator_id,platform,platform_account_id);
+
+
+-- postgres.public.creator_bank_accounts definition
+
+-- Drop table
+
+-- DROP TABLE postgres.public.creator_bank_accounts;
+
+CREATE TABLE postgres.public.creator_bank_accounts (
+	id uuid DEFAULT gen_random_uuid() NOT NULL,
+	creator_id uuid NOT NULL,
+	bank_code varchar(50) NOT NULL,
+	account_number varchar(100) NOT NULL,
+	account_name varchar(255) NOT NULL,
+	is_primary bool DEFAULT false,
+	status bankaccountstatus DEFAULT 'PENDING'::bankaccountstatus,
+	created_at timestamptz DEFAULT now(),
+	updated_at timestamptz DEFAULT now(),
+	CONSTRAINT creator_bank_accounts_pkey PRIMARY KEY (id),
+	CONSTRAINT creator_bank_accounts_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES postgres.public.creators(id)
+);
+
+
+-- postgres.public.submissions definition
+
+-- Drop table
+
+-- DROP TABLE postgres.public.submissions;
+
+CREATE TABLE postgres.public.submissions (
+	submission_id uuid DEFAULT gen_random_uuid() NOT NULL,
+	campaign_id uuid NOT NULL,
+	creator_id uuid NOT NULL,
+	connected_account_id uuid,
+	content_url text NOT NULL,
+	status submissionstatus DEFAULT 'PENDING'::submissionstatus,
+	views_tervalidasi int4 DEFAULT 0,
+	estimasi_komisi int8 DEFAULT 0,
+	gross_earning int8 DEFAULT 0,
+	platform_fee int8 DEFAULT 0,
+	net_earning int8 DEFAULT 0,
+	alasan_penolakan text,
+	submitted_at timestamptz DEFAULT now(),
+	updated_at timestamptz DEFAULT now(),
+	CONSTRAINT submissions_pkey PRIMARY KEY (submission_id),
+	CONSTRAINT submissions_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES postgres.public.campaigns(campaign_id),
+	CONSTRAINT submissions_connected_account_id_fkey FOREIGN KEY (connected_account_id) REFERENCES postgres.public.connected_social_accounts(id),
+	CONSTRAINT submissions_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES postgres.public.creators(id)
+);
+CREATE UNIQUE INDEX submissions_campaign_id_content_url_key ON postgres.public.submissions (campaign_id,content_url);
+
+
+-- postgres.public.wallet_transactions definition
+
+-- Drop table
+
+-- DROP TABLE postgres.public.wallet_transactions;
+
+CREATE TABLE postgres.public.wallet_transactions (
+	transaction_id uuid DEFAULT gen_random_uuid() NOT NULL,
+	wallet_id uuid NOT NULL,
+	"type" wallettxtype NOT NULL,
+	amount int8 NOT NULL,
+	reference_id uuid,
+	idempotency_key varchar(255) NOT NULL,
+	created_at timestamptz DEFAULT now(),
+	CONSTRAINT wallet_transactions_pkey PRIMARY KEY (transaction_id),
+	CONSTRAINT wallet_transactions_wallet_id_fkey FOREIGN KEY (wallet_id) REFERENCES postgres.public.wallets(wallet_id)
+);
+CREATE UNIQUE INDEX wallet_transactions_idempotency_key_key ON postgres.public.wallet_transactions (idempotency_key);
+
+
+-- postgres.public.withdrawals definition
+
+-- Drop table
+
+-- DROP TABLE postgres.public.withdrawals;
+
+CREATE TABLE postgres.public.withdrawals (
+	withdrawal_id uuid DEFAULT gen_random_uuid() NOT NULL,
+	creator_id uuid NOT NULL,
+	amount int8 NOT NULL,
+	bank_account_id uuid NOT NULL,
+	status withdrawalstatus DEFAULT 'QUEUED'::withdrawalstatus,
+	midtrans_ref_no varchar(100),
+	idempotency_key varchar(255) NOT NULL,
+	created_at timestamptz DEFAULT now(),
+	updated_at timestamptz DEFAULT now(),
+	CONSTRAINT withdrawals_pkey PRIMARY KEY (withdrawal_id),
+	CONSTRAINT withdrawals_bank_account_id_fkey FOREIGN KEY (bank_account_id) REFERENCES postgres.public.creator_bank_accounts(id),
+	CONSTRAINT withdrawals_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES postgres.public.creators(id)
+);
+CREATE UNIQUE INDEX withdrawals_idempotency_key_key ON postgres.public.withdrawals (idempotency_key);

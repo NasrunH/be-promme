@@ -1,0 +1,234 @@
+-- Aktifkan ekstensi UUID jika belum ada
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+
+-- --- ENUMERATIONS ---
+
+
+DO $$ BEGIN
+    CREATE TYPE UserRole AS ENUM ('BRAND', 'CREATOR', 'ADMIN', 'FINANCE');
+    CREATE TYPE UserStatus AS ENUM ('ACTIVE', 'FLAGGED', 'UNDER_REVIEW', 'SUSPENDED', 'BANNED');
+    CREATE TYPE KycStatus AS ENUM ('UNVERIFIED', 'PENDING', 'VERIFIED', 'REJECTED');
+    CREATE TYPE SocialAccountStatus AS ENUM ('PENDING', 'VERIFIED', 'EXPIRED', 'REVOKED');
+    CREATE TYPE BankAccountStatus AS ENUM ('PENDING', 'VERIFIED', 'REJECTED');
+    CREATE TYPE CampaignStatus AS ENUM ('DRAFT', 'AKTIF', 'DIJEDA_HARIAN', 'DIJEDA', 'SELESAI_BUDGET', 'SELESAI_WAKTU', 'DIBATALKAN');
+    CREATE TYPE PlatformTipe AS ENUM ('YOUTUBE', 'TIKTOK', 'INSTAGRAM', 'WEBSITE');
+    CREATE TYPE SubmissionStatus AS ENUM ('PENDING', 'VALIDATING', 'MENGHITUNG', 'SIAP_BAYAR', 'SELESAI', 'SELESAI_NOL', 'DITOLAK');
+    CREATE TYPE WalletTxType AS ENUM ('EARN_COMMISSION', 'WITHDRAWAL_INIT', 'WITHDRAWAL_SUCCESS', 'WITHDRAWAL_FAILED', 'ADJUSTMENT_CREDIT', 'ADJUSTMENT_DEBIT', 'DISPUTE_HOLD', 'DISPUTE_RELEASE');
+    CREATE TYPE TransaksiStatus AS ENUM ('PENDING', 'SETTLEMENT', 'EXPIRE', 'CANCEL', 'DENY');
+    CREATE TYPE WithdrawalStatus AS ENUM ('QUEUED', 'PROCESSING', 'PROCESSED', 'FAILED');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+
+-- --- TABLES ---
+
+
+-- 1. Users
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    role UserRole NOT NULL,
+    status UserStatus DEFAULT 'ACTIVE',
+    last_login_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+
+-- 2. Brands
+CREATE TABLE brands (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    nama_perusahaan VARCHAR(255) NOT NULL,
+    pic_name VARCHAR(255) NOT NULL,
+    phone_number VARCHAR(50)
+);
+
+
+-- 3. Creators
+CREATE TABLE creators (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    nama_lengkap VARCHAR(255) NOT NULL,
+    kyc_status KycStatus DEFAULT 'UNVERIFIED',
+    nik VARCHAR(16) UNIQUE,
+    npwp VARCHAR(20),
+    kyc_verified_at TIMESTAMPTZ
+);
+
+
+-- 4. Connected Social Accounts
+CREATE TABLE connected_social_accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    creator_id UUID NOT NULL REFERENCES creators(id),
+    platform PlatformTipe NOT NULL,
+    platform_account_id VARCHAR(255) NOT NULL, -- ID unik dari platform
+    username VARCHAR(255),
+    status SocialAccountStatus DEFAULT 'PENDING',
+    access_token TEXT, -- Enkripsi di sisi aplikasi
+    refresh_token TEXT,
+    token_expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(creator_id, platform, platform_account_id)
+);
+
+
+-- 5. Creator Bank Accounts
+CREATE TABLE creator_bank_accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    creator_id UUID NOT NULL REFERENCES creators(id),
+    bank_code VARCHAR(50) NOT NULL,
+    account_number VARCHAR(100) NOT NULL,
+    account_name VARCHAR(255) NOT NULL, -- Harus cocok dengan KYC
+    is_primary BOOLEAN DEFAULT false,
+    status BankAccountStatus DEFAULT 'PENDING',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+
+-- 6. Campaigns
+CREATE TABLE campaigns (
+    campaign_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    brand_id UUID NOT NULL REFERENCES brands(id),
+    nama_campaign VARCHAR(255) NOT NULL,
+    budget_total BIGINT NOT NULL CHECK (budget_total >= 100000),
+    budget_tersisa BIGINT NOT NULL DEFAULT 0,
+    budget_tereservasi BIGINT NOT NULL DEFAULT 0,
+    budget_terpakai BIGINT NOT NULL DEFAULT 0,
+    daily_spend_limit BIGINT,
+    daily_spent_today BIGINT DEFAULT 0,
+    platform PlatformTipe NOT NULL,
+    komisi_per_view BIGINT NOT NULL,
+    platform_fee_pct SMALLINT DEFAULT 1000, -- 1000 = 10.00%
+    min_watch_duration INTEGER NOT NULL, -- Dalam detik
+    max_submission_per_creator INTEGER DEFAULT 1,
+    tanggal_mulai TIMESTAMPTZ NOT NULL,
+    tanggal_berakhir TIMESTAMPTZ NOT NULL,
+    status CampaignStatus DEFAULT 'DRAFT',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+
+-- 7. Submissions
+CREATE TABLE submissions (
+    submission_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    campaign_id UUID NOT NULL REFERENCES campaigns(campaign_id),
+    creator_id UUID NOT NULL REFERENCES creators(id),
+    connected_account_id UUID REFERENCES connected_social_accounts(id),
+    content_url TEXT NOT NULL,
+    status SubmissionStatus DEFAULT 'PENDING',
+    views_tervalidasi INTEGER DEFAULT 0,
+    estimasi_komisi BIGINT DEFAULT 0,
+    gross_earning BIGINT DEFAULT 0,
+    platform_fee BIGINT DEFAULT 0,
+    net_earning BIGINT DEFAULT 0,
+    alasan_penolakan TEXT,
+    submitted_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(campaign_id, content_url)
+);
+
+
+-- 8. Wallets
+CREATE TABLE wallets (
+    wallet_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    creator_id UUID UNIQUE NOT NULL REFERENCES creators(id),
+    balance BIGINT NOT NULL DEFAULT 0,
+    pending_balance BIGINT NOT NULL DEFAULT 0,
+    hold_balance BIGINT NOT NULL DEFAULT 0,
+    total_earned BIGINT NOT NULL DEFAULT 0,
+    total_withdrawn BIGINT NOT NULL DEFAULT 0,
+    version INTEGER DEFAULT 1, -- Untuk Optimistic Locking
+    last_transaction TIMESTAMPTZ
+);
+
+
+-- 9. Wallet Transactions
+CREATE TABLE wallet_transactions (
+    transaction_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    wallet_id UUID NOT NULL REFERENCES wallets(wallet_id),
+    type WalletTxType NOT NULL,
+    amount BIGINT NOT NULL,
+    reference_id UUID,
+    idempotency_key VARCHAR(255) UNIQUE NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+
+-- 10. Topup Transactions (Brand side)
+CREATE TABLE topup_transactions (
+    topup_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    campaign_id UUID NOT NULL REFERENCES campaigns(campaign_id),
+    order_id VARCHAR(100) UNIQUE NOT NULL,
+    gross_amount BIGINT NOT NULL,
+    status TransaksiStatus DEFAULT 'PENDING',
+    snap_token VARCHAR(255),
+    payment_type VARCHAR(50),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+
+-- 11. Withdrawals
+CREATE TABLE withdrawals (
+    withdrawal_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    creator_id UUID NOT NULL REFERENCES creators(id),
+    amount BIGINT NOT NULL,
+    bank_account_id UUID NOT NULL REFERENCES creator_bank_accounts(id),
+    status WithdrawalStatus DEFAULT 'QUEUED',
+    midtrans_ref_no VARCHAR(100),
+    idempotency_key VARCHAR(255) UNIQUE NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+
+-- 12. Audit Logs
+CREATE TABLE audit_logs (
+    log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_id UUID,
+    actor_type VARCHAR(50),
+    action VARCHAR(100),
+    entity_type VARCHAR(50),
+    entity_id UUID,
+    old_data JSONB,
+    new_data JSONB,
+    ip_address VARCHAR(45),
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+
+-- --- FUNCTIONS & TRIGGERS ---
+
+
+-- Otomatis update 'updated_at'
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+
+-- Pasang Trigger ke tabel yang memiliki updated_at
+CREATE TRIGGER update_users_modtime BEFORE UPDATE ON users FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+CREATE TRIGGER update_brands_modtime BEFORE UPDATE ON brands FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+CREATE TRIGGER update_connected_social_accounts_modtime BEFORE UPDATE ON connected_social_accounts FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+CREATE TRIGGER update_creator_bank_accounts_modtime BEFORE UPDATE ON creator_bank_accounts FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+CREATE TRIGGER update_campaigns_modtime BEFORE UPDATE ON campaigns FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+CREATE TRIGGER update_submissions_modtime BEFORE UPDATE ON submissions FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+CREATE TRIGGER update_topup_transactions_modtime BEFORE UPDATE ON topup_transactions FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+CREATE TRIGGER update_withdrawals_modtime BEFORE UPDATE ON withdrawals FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+
+
+-- --- COMMENTS ---
+COMMENT ON COLUMN campaigns.platform_fee_pct IS 'Stored as integer. 1000 means 10.00%';
+COMMENT ON COLUMN wallets.version IS 'Used for optimistic locking to prevent double spending';
+
