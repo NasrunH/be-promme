@@ -1,156 +1,241 @@
 const axios = require('axios');
+const crypto = require('crypto');
 require('dotenv').config();
 
 /**
  * OAuth Callback Controller
  * Menangani callback dari OAuth providers (Meta, Google, TikTok)
+ * Referensi TikTok: https://developers.tiktok.com/doc/login-kit-web
  */
 
-// 1. HANDLE FACEBOOK/INSTAGRAM CALLBACK
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const REDIRECT_URI = process.env.OAUTH_REDIRECT_URI || 'http://localhost:5173/oauth/callback';
+
+// ─────────────────────────────────────────────────────────────
+// 1. HANDLE FACEBOOK CALLBACK
+// ─────────────────────────────────────────────────────────────
 const handleFacebookCallback = async (req, res) => {
   try {
-    const { code, state } = req.query;
+    const { code, error, error_description, state } = req.query;
 
-    if (!code) {
-      return res.status(400).json({ status: 'error', message: 'Authorization code tidak ditemukan' });
+    if (error) {
+      console.error('Facebook OAuth denied:', error_description);
+      return res.redirect(
+        `${FRONTEND_URL}/oauth/callback?error=${encodeURIComponent(error_description || 'Akses ditolak')}&platform=FACEBOOK`
+      );
     }
 
-    // Validasi state (optional, untuk security)
-    // const storedState = req.session.oauthState;
-    // if (state !== storedState) {
-    //   return res.status(400).json({ status: 'error', message: 'Invalid state parameter' });
-    // }
+    if (!code) {
+      return res.redirect(
+        `${FRONTEND_URL}/oauth/callback?error=${encodeURIComponent('Authorization code tidak ditemukan')}&platform=FACEBOOK`
+      );
+    }
 
-    // Return authorization code ke frontend (frontend akan mengirimkannya ke backend via /social-accounts/connect)
-    res.json({
-      status: 'success',
-      message: 'Authorization code received. Send this code to /api/creators/social-accounts/connect',
-      data: {
-        code: code,
-        platform: 'FACEBOOK'
-      }
-    });
+    return res.redirect(
+      `${FRONTEND_URL}/oauth/callback?code=${encodeURIComponent(code)}&platform=FACEBOOK&state=${state || ''}`
+    );
 
   } catch (error) {
     console.error('Facebook OAuth Callback Error:', error);
-    res.status(500).json({ status: 'error', message: 'Error handling Facebook callback' });
+    return res.redirect(
+      `${FRONTEND_URL}/oauth/callback?error=${encodeURIComponent('Error handling Facebook callback')}&platform=FACEBOOK`
+    );
   }
 };
 
-// 2. HANDLE GOOGLE/YOUTUBE CALLBACK
-const handleGoogleCallback = async (req, res) => {
+// ─────────────────────────────────────────────────────────────
+// 2. HANDLE INSTAGRAM CALLBACK
+// ─────────────────────────────────────────────────────────────
+const handleInstagramCallback = async (req, res) => {
   try {
-    const { code, state } = req.query;
+    const { code, error, error_description, state } = req.query;
 
-    if (!code) {
-      return res.status(400).json({ status: 'error', message: 'Authorization code tidak ditemukan' });
+    if (error) {
+      console.error('Instagram OAuth denied:', error_description);
+      return res.redirect(
+        `${FRONTEND_URL}/oauth/callback?error=${encodeURIComponent(error_description || 'Akses ditolak')}&platform=INSTAGRAM`
+      );
     }
 
-    // Return authorization code ke frontend
-    res.json({
-      status: 'success',
-      message: 'Authorization code received. Send this code to /api/creators/social-accounts/connect',
-      data: {
-        code: code,
-        platform: 'YOUTUBE'
-      }
-    });
+    if (!code) {
+      return res.redirect(
+        `${FRONTEND_URL}/oauth/callback?error=${encodeURIComponent('Authorization code tidak ditemukan')}&platform=INSTAGRAM`
+      );
+    }
+
+    // Instagram menambahkan '#_' di akhir code, perlu di-trim
+    const cleanCode = code.replace('#_', '');
+
+    return res.redirect(
+      `${FRONTEND_URL}/oauth/callback?code=${encodeURIComponent(cleanCode)}&platform=INSTAGRAM&state=${state || ''}`
+    );
+
+  } catch (error) {
+    console.error('Instagram OAuth Callback Error:', error);
+    return res.redirect(
+      `${FRONTEND_URL}/oauth/callback?error=${encodeURIComponent('Error handling Instagram callback')}&platform=INSTAGRAM`
+    );
+  }
+};
+
+// ─────────────────────────────────────────────────────────────
+// 3. HANDLE GOOGLE/YOUTUBE CALLBACK
+// ─────────────────────────────────────────────────────────────
+const handleGoogleCallback = async (req, res) => {
+  try {
+    const { code, error, state } = req.query;
+
+    if (error) {
+      console.error('Google OAuth denied:', error);
+      return res.redirect(
+        `${FRONTEND_URL}/oauth/callback?error=${encodeURIComponent('Akses Google ditolak')}&platform=YOUTUBE`
+      );
+    }
+
+    if (!code) {
+      return res.redirect(
+        `${FRONTEND_URL}/oauth/callback?error=${encodeURIComponent('Authorization code tidak ditemukan')}&platform=YOUTUBE`
+      );
+    }
+
+    return res.redirect(
+      `${FRONTEND_URL}/oauth/callback?code=${encodeURIComponent(code)}&platform=YOUTUBE&state=${state || ''}`
+    );
 
   } catch (error) {
     console.error('Google OAuth Callback Error:', error);
-    res.status(500).json({ status: 'error', message: 'Error handling Google callback' });
+    return res.redirect(
+      `${FRONTEND_URL}/oauth/callback?error=${encodeURIComponent('Error handling Google callback')}&platform=YOUTUBE`
+    );
   }
 };
 
-// 3. HANDLE TIKTOK CALLBACK
+// ─────────────────────────────────────────────────────────────
+// 4. HANDLE TIKTOK CALLBACK
+// Sesuai dokumentasi: https://developers.tiktok.com/doc/login-kit-web
+// Response params: code, scopes, state, error, error_description
+// ─────────────────────────────────────────────────────────────
 const handleTikTokCallback = async (req, res) => {
   try {
-    const { code, state } = req.query;
+    const { code, state, error, error_description } = req.query;
 
-    if (!code) {
-      return res.status(400).json({ status: 'error', message: 'Authorization code tidak ditemukan' });
+    if (error) {
+      console.error('TikTok OAuth denied:', error_description);
+      return res.redirect(
+        `${FRONTEND_URL}/oauth/callback?error=${encodeURIComponent(error_description || 'Akses TikTok ditolak')}&platform=TIKTOK`
+      );
     }
 
-    // Return authorization code ke frontend
-    res.json({
-      status: 'success',
-      message: 'Authorization code received. Send this code to /api/creators/social-accounts/connect',
-      data: {
-        code: code,
-        platform: 'TIKTOK'
-      }
-    });
+    if (!code) {
+      return res.redirect(
+        `${FRONTEND_URL}/oauth/callback?error=${encodeURIComponent('Authorization code tidak ditemukan')}&platform=TIKTOK`
+      );
+    }
+
+    return res.redirect(
+      `${FRONTEND_URL}/oauth/callback?code=${encodeURIComponent(code)}&platform=TIKTOK&state=${state || ''}`
+    );
 
   } catch (error) {
     console.error('TikTok OAuth Callback Error:', error);
-    res.status(500).json({ status: 'error', message: 'Error handling TikTok callback' });
+    return res.redirect(
+      `${FRONTEND_URL}/oauth/callback?error=${encodeURIComponent('Error handling TikTok callback')}&platform=TIKTOK`
+    );
   }
 };
 
-// 4. GENERATE AUTHORIZATION URL (Untuk frontend)
+// ─────────────────────────────────────────────────────────────
+// 5. GENERATE AUTHORIZATION URL
+// ─────────────────────────────────────────────────────────────
 const generateAuthorizationUrl = async (req, res) => {
   try {
     const { platform } = req.params;
-    const REDIRECT_URI = process.env.OAUTH_REDIRECT_URI || 'http://localhost:5173/oauth/callback';
+
+    // Generate csrf state — sesuai dokumentasi TikTok (alphanumeric random string)
+    const csrfState = crypto.randomBytes(16).toString('hex');
 
     let authUrl = '';
 
     switch (platform.toUpperCase()) {
       case 'FACEBOOK':
-        authUrl = `https://www.facebook.com/v19.0/dialog/oauth?` +
-          `client_id=${process.env.FB_APP_ID}&` +
-          `redirect_uri=${encodeURIComponent(REDIRECT_URI)}&` +
-          `scope=public_profile,email&` +
-          `state=${Date.now()}`;
+        authUrl = 'https://www.facebook.com/v19.0/dialog/oauth?' +
+          new URLSearchParams({
+            client_id:     process.env.FB_APP_ID,
+            redirect_uri:  REDIRECT_URI,
+            scope:         'public_profile,email',
+            response_type: 'code',
+            state:         csrfState
+          }).toString();
         break;
 
       case 'INSTAGRAM':
-        authUrl = `https://api.instagram.com/oauth/authorize?` +
-          `client_id=${process.env.FB_APP_ID}&` +
-          `redirect_uri=${encodeURIComponent(REDIRECT_URI)}&` +
-          `scope=user_profile,user_media&` +
-          `response_type=code&` +
-          `state=${Date.now()}`;
-        break;
+  authUrl = 'https://www.instagram.com/oauth/authorize?' +
+    new URLSearchParams({
+      client_id:     process.env.INSTAGRAM_APP_ID,    // ← bukan FB_APP_ID lagi
+      redirect_uri:  REDIRECT_URI,
+      scope:         'instagram_business_basic',       // ← scope baru
+      response_type: 'code',
+      state:         csrfState
+    }).toString();
+  break;
 
       case 'YOUTUBE':
-        authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
-          `client_id=${process.env.GOOGLE_CLIENT_ID}&` +
-          `redirect_uri=${encodeURIComponent(REDIRECT_URI)}&` +
-          `response_type=code&` +
-          `scope=${encodeURIComponent('https://www.googleapis.com/auth/youtube.readonly')}&` +
-          `access_type=offline&` +
-          `state=${Date.now()}`;
+        authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' +
+          new URLSearchParams({
+            client_id:     process.env.GOOGLE_CLIENT_ID,
+            redirect_uri:  REDIRECT_URI,
+            response_type: 'code',
+            scope:         'https://www.googleapis.com/auth/youtube.readonly',
+            access_type:   'offline',
+            prompt:        'consent',
+            state:         csrfState
+          }).toString();
         break;
 
       case 'TIKTOK':
-        authUrl = `https://www.tiktok.com/v1/oauth/authorize?` +
-          `client_key=${process.env.TIKTOK_CLIENT_KEY}&` +
-          `redirect_uri=${encodeURIComponent(REDIRECT_URI)}&` +
-          `scope=${encodeURIComponent('user.info.basic')}&` +
-          `response_type=code&` +
-          `state=${Date.now()}`;
+        // Sesuai dokumentasi resmi TikTok Login Kit Web:
+        // - URL: https://www.tiktok.com/v2/auth/authorize/  (trailing slash wajib)
+        // - TIDAK perlu PKCE (code_challenge) untuk Login Kit web
+        // - Format params: application/x-www-form-urlencoded
+        // - state: random alphanumeric untuk anti-CSRF
+        authUrl = 'https://www.tiktok.com/v2/auth/authorize/?' +
+          new URLSearchParams({
+            client_key:    process.env.TIKTOK_CLIENT_KEY,
+            scope:         'user.info.basic',
+            response_type: 'code',
+            redirect_uri:  REDIRECT_URI,
+            state:         csrfState
+          }).toString();
         break;
 
       default:
-        return res.status(400).json({ status: 'error', message: `Platform ${platform} tidak didukung` });
+        return res.status(400).json({
+          status:  'error',
+          message: `Platform ${platform} tidak didukung`
+        });
     }
 
-    res.json({
+    return res.json({
       status: 'success',
       data: {
-        authorization_url: authUrl
+        authorization_url: authUrl,
+        platform:          platform.toUpperCase(),
+        state:             csrfState
       }
     });
 
   } catch (error) {
     console.error('Generate Authorization URL Error:', error);
-    res.status(500).json({ status: 'error', message: 'Gagal generate authorization URL' });
+    return res.status(500).json({
+      status:  'error',
+      message: 'Gagal generate authorization URL'
+    });
   }
 };
 
 module.exports = {
   handleFacebookCallback,
+  handleInstagramCallback,
   handleGoogleCallback,
   handleTikTokCallback,
   generateAuthorizationUrl
