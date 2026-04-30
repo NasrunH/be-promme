@@ -1,19 +1,58 @@
 const supabase = require('../config/supabase');
 const { logAudit } = require('../utils/auditLogger');
+const { parsePagination, parseFilters, parseSearch, parseSort, formatPaginationResponse } = require('../utils/pagination');
 const crypto = require('crypto');
 const isIP = (str) => /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(str);
 
+/**
+ * Get all users dengan pagination, filter, dan search
+ * @query {number} page - Halaman (default: 1)
+ * @query {number} limit - Items per page (default: 10, max: 100)
+ * @query {string} search - Cari di: email, nama
+ * @query {string} status - Filter: ACTIVE, INACTIVE, SUSPENDED
+ * @query {string} role - Filter: ADMIN, BRAND, CREATOR, FINANCE
+ * @query {string} sort - Sort: created_at, -created_at, email, -email
+ */
 const listUsers = async (req, res) => {
     try {
-        const { data: users, error } = await supabase.from('users').select(`
-            id, email, role, status, created_at,
-            creators ( * ),
-            brands ( * )
-        `);
+        const { page, limit, offset } = parsePagination(req.query);
+        const searchTerm = req.query.search ? req.query.search.trim() : '';
+        const allowedFilters = ['status', 'role'];
+        const filters = parseFilters(req.query, allowedFilters);
+
+        // Build query
+        let query = supabase.from('users').select(`
+            id, email, username, role, status, created_at,
+            creators ( id, display_name, kyc_status ),
+            brands ( id, name )
+        `, { count: 'exact' });
+
+        // Apply filters
+        Object.entries(filters).forEach(([key, value]) => {
+            query = query.eq(key, value);
+        });
+
+        // Apply search (case-insensitive email dan username)
+        if (searchTerm) {
+            query = query.or(`email.ilike.%${searchTerm}%,username.ilike.%${searchTerm}%`);
+        }
+
+        // Apply sorting
+        const sortField = req.query.sort || '-created_at';
+        const [field, direction] = sortField.startsWith('-') 
+            ? [sortField.substring(1), 'desc'] 
+            : [sortField, 'asc'];
+        query = query.order(field, { ascending: direction === 'asc' });
+
+        // Apply pagination
+        query = query.range(offset, offset + limit - 1);
+
+        const { data: users, error, count } = await query;
 
         if (error) throw new Error(error.message || JSON.stringify(error));
 
-        res.json({ status: 'success', data: users });
+        const response = formatPaginationResponse(users || [], count || 0, page, limit);
+        res.json({ status: 'success', ...response });
     } catch (e) {
         console.error("List Users Error:", e);
         res.status(500).json({ status: 'error', message: e.message || 'Gagal menarik data pengguna' });
@@ -640,4 +679,4 @@ module.exports = {
     listUsers, updateUserStatus, reviewKyc, updatePlatformFee, updateCampaignStatus,
     getAnomalies, holdWalletBalance, releaseWalletBalance, invalidateSubmission, getAuditLogs,
     getSettings, updateSettings, approveSubmission
-};
+};
