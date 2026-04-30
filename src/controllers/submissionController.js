@@ -1,6 +1,7 @@
 const supabase = require('../config/supabase');
 const { logAudit } = require('../utils/auditLogger');
 const { scrapeViews } = require('../services/scraperService');
+const { parsePagination, parseFilters, parseSearch, parseSort, formatPaginationResponse } = require('../utils/pagination');
 
 // Helper: Ambil data creator spesifik berdasarkan user_id di JWT Token
 const getCreatorByUserId = async (userId) => {
@@ -233,12 +234,25 @@ exports.getSubmissionStatus = async (req, res) => {
 };
 
 // 4.3 Semua Submission Creator (All Campaigns)
+/**
+ * Get all creator submissions dengan pagination, filter, dan search
+ * @query {number} page - Halaman (default: 1)
+ * @query {number} limit - Items per page (default: 10, max: 100)
+ * @query {string} search - Cari di: nama_campaign, content_url
+ * @query {string} status - Filter: PENDING, APPROVED, REJECTED
+ * @query {string} platform - Filter: INSTAGRAM, TIKTOK, YOUTUBE
+ * @query {number} earning_min - Filter minimum earning
+ * @query {number} earning_max - Filter maximum earning
+ * @query {string} sort - Sort: submitted_at, -submitted_at, net_earning, -net_earning, views_tervalidasi, -views_tervalidasi
+ */
 exports.getAllSubmissions = async (req, res) => {
   try {
     const userId = req.user.user_id || req.user.id;
     const creator = await getCreatorByUserId(userId);
+    const { page, limit, offset } = parsePagination(req.query);
+    const searchTerm = req.query.search ? req.query.search.trim() : '';
 
-    const { data: submissions, error } = await supabase
+    let query = supabase
       .from('submissions')
       .select(`
         submission_id,
@@ -250,29 +264,68 @@ exports.getAllSubmissions = async (req, res) => {
         estimasi_komisi,
         alasan_penolakan,
         campaigns ( campaign_id, nama_campaign, platform, komisi_per_view )
-      `)
-      .eq('creator_id', creator.id)
-      .order('submitted_at', { ascending: false });
+      `, { count: 'exact' })
+      .eq('creator_id', creator.id);
+
+    // Apply filters
+    if (req.query.status) {
+      query = query.eq('status', req.query.status.toUpperCase());
+    }
+
+    if (req.query.platform) {
+      query = query.eq('campaigns.platform', req.query.platform.toUpperCase());
+    }
+
+    // Apply earning range filters
+    if (req.query.earning_min) {
+      query = query.gte('net_earning', parseFloat(req.query.earning_min));
+    }
+    if (req.query.earning_max) {
+      query = query.lte('net_earning', parseFloat(req.query.earning_max));
+    }
+
+    // Apply sorting
+    const sortField = req.query.sort || '-submitted_at';
+    const [field, direction] = sortField.startsWith('-') 
+      ? [sortField.substring(1), 'desc'] 
+      : [sortField, 'asc'];
+    query = query.order(field, { ascending: direction === 'asc' });
+
+    // Apply pagination
+    query = query.range(offset, offset + limit - 1);
+
+    const { data: submissions, error, count } = await query;
 
     if (error) throw error;
 
+    const data = (submissions || []).map(sub => ({
+      submission_id: sub.submission_id,
+      campaign_id: sub.campaigns?.campaign_id,
+      nama_campaign: sub.campaigns?.nama_campaign,
+      platform: sub.campaigns?.platform,
+      komisi_per_view: sub.campaigns?.komisi_per_view,
+      content_url: sub.content_url,
+      status: sub.status,
+      submitted_at: sub.submitted_at,
+      views: sub.views_tervalidasi || 0,
+      estimasi_komisi: sub.estimasi_komisi || 0,
+      net_earning: sub.net_earning || 0,
+      alasan_penolakan: sub.alasan_penolakan || null
+    }));
+
+    // Apply search filter on mapped data
+    if (searchTerm) {
+      data = data.filter(d => 
+        d.nama_campaign.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        d.content_url.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+
+    const response = formatPaginationResponse(data, count || 0, page, limit);
     return res.status(200).json({
       status: 'success',
       message: 'Berhasil mengambil riwayat submission',
-      data: (submissions || []).map(sub => ({
-        submission_id: sub.submission_id,
-        campaign_id: sub.campaigns?.campaign_id,
-        nama_campaign: sub.campaigns?.nama_campaign,
-        platform: sub.campaigns?.platform,
-        komisi_per_view: sub.campaigns?.komisi_per_view,
-        content_url: sub.content_url,
-        status: sub.status,
-        submitted_at: sub.submitted_at,
-        views: sub.views_tervalidasi || 0,
-        estimasi_komisi: sub.estimasi_komisi || 0,
-        net_earning: sub.net_earning || 0,
-        alasan_penolakan: sub.alasan_penolakan || null
-      }))
+      ...response
     });
 
   } catch (error) {
@@ -281,10 +334,21 @@ exports.getAllSubmissions = async (req, res) => {
 };
 
 // 4.4 Submission per Campaign (untuk tracking di My Campaigns)
+/**
+ * Get creator's submissions for specific campaign dengan pagination dan filter
+ * @param {string} campaign_id - Campaign ID
+ * @query {number} page - Halaman (default: 1)
+ * @query {number} limit - Items per page (default: 10, max: 100)
+ * @query {string} status - Filter: PENDING, APPROVED, REJECTED
+ * @query {number} views_min - Filter minimum views
+ * @query {number} views_max - Filter maximum views
+ * @query {string} sort - Sort: submitted_at, -submitted_at, views_tervalidasi, -views_tervalidasi, net_earning, -net_earning
+ */
 exports.getSubmissionsByCampaign = async (req, res) => {
   try {
     const { campaign_id } = req.params;
     const userId = req.user.user_id || req.user.id;
+    const { page, limit, offset } = parsePagination(req.query);
 
     const creator = await getCreatorByUserId(userId);
 
@@ -310,7 +374,7 @@ exports.getSubmissionsByCampaign = async (req, res) => {
       .eq('campaign_id', campaign_id)
       .single();
 
-    const { data: submissions, error } = await supabase
+    let query = supabase
       .from('submissions')
       .select(`
         submission_id,
@@ -322,29 +386,58 @@ exports.getSubmissionsByCampaign = async (req, res) => {
         gross_earning,
         net_earning,
         alasan_penolakan
-      `)
+      `, { count: 'exact' })
       .eq('campaign_id', campaign_id)
-      .eq('creator_id', creator.id)
-      .order('submitted_at', { ascending: false });
+      .eq('creator_id', creator.id);
+
+    // Apply filters
+    if (req.query.status) {
+      query = query.eq('status', req.query.status.toUpperCase());
+    }
+
+    // Apply views range filters
+    if (req.query.views_min) {
+      query = query.gte('views_tervalidasi', parseInt(req.query.views_min));
+    }
+    if (req.query.views_max) {
+      query = query.lte('views_tervalidasi', parseInt(req.query.views_max));
+    }
+
+    // Apply sorting
+    const sortField = req.query.sort || '-submitted_at';
+    const [field, direction] = sortField.startsWith('-') 
+      ? [sortField.substring(1), 'desc'] 
+      : [sortField, 'asc'];
+    query = query.order(field, { ascending: direction === 'asc' });
+
+    // Apply pagination
+    query = query.range(offset, offset + limit - 1);
+
+    const { data: submissions, error, count } = await query;
 
     if (error) throw error;
+
+    const submissionData = (submissions || []).map(s => ({
+      submission_id: s.submission_id,
+      content_url: s.content_url,
+      status: s.status,
+      submitted_at: s.submitted_at,
+      views: s.views_tervalidasi || 0,
+      estimasi_komisi: s.estimasi_komisi || 0,
+      gross_earning: s.gross_earning || 0,
+      net_earning: s.net_earning || 0,
+      alasan_penolakan: s.alasan_penolakan || null
+    }));
+
+    const response = formatPaginationResponse(submissionData, count || 0, page, limit);
 
     return res.status(200).json({
       status: 'success',
       data: {
         campaign_info: campaign,
-        submissions: (submissions || []).map(s => ({
-          submission_id: s.submission_id,
-          content_url: s.content_url,
-          status: s.status,
-          submitted_at: s.submitted_at,
-          views: s.views_tervalidasi || 0,
-          estimasi_komisi: s.estimasi_komisi || 0,
-          gross_earning: s.gross_earning || 0,
-          net_earning: s.net_earning || 0,
-          alasan_penolakan: s.alasan_penolakan || null
-        }))
-      }
+        submissions: response.data
+      },
+      pagination: response.pagination
     });
 
   } catch (error) {

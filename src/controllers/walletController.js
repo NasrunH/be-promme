@@ -1,4 +1,5 @@
 const supabase = require('../config/supabase');
+const { parsePagination, parseFilters, parseSearch, parseSort, formatPaginationResponse } = require('../utils/pagination');
 
 // 1. GET WALLET BALANCE (Enriched with summary)
 const getWalletBalance = async (req, res) => {
@@ -84,32 +85,78 @@ const requestWithdrawal = async (req, res) => {
   }
 };
 
-// 3. GET WALLET LEDGER (Riwayat Transaksi)
+/**
+ * Get wallet transactions dengan pagination, filter, dan search
+ * @query {number} page - Halaman (default: 1)
+ * @query {number} limit - Items per page (default: 10, max: 100)
+ * @query {string} type - Filter: CREDIT, DEBIT
+ * @query {number} amount_min - Filter minimum amount
+ * @query {number} amount_max - Filter maximum amount
+ * @query {string} sort - Sort: created_at, -created_at, amount, -amount
+ */
 const getWalletTransactions = async (req, res) => {
   try {
     const userId = req.user.id;
+    const { page, limit, offset } = parsePagination(req.query);
     const { data: creator } = await supabase.from('creators').select('id').eq('user_id', userId).single();
     
     const { data: wallet } = await supabase.from('wallets').select('wallet_id').eq('creator_id', creator.id).single();
     if (!wallet) return res.status(404).json({ message: 'Dompet tidak ditemukan' });
 
-    const { data: txs, error } = await supabase
+    let query = supabase
       .from('wallet_transactions')
-      .select('*')
-      .eq('wallet_id', wallet.wallet_id)
-      .order('created_at', { ascending: false });
+      .select('*', { count: 'exact' })
+      .eq('wallet_id', wallet.wallet_id);
+
+    // Apply type filter
+    if (req.query.type) {
+      query = query.eq('type', req.query.type.toUpperCase());
+    }
+
+    // Apply amount range filters
+    if (req.query.amount_min) {
+      query = query.gte('amount', parseFloat(req.query.amount_min));
+    }
+    if (req.query.amount_max) {
+      query = query.lte('amount', parseFloat(req.query.amount_max));
+    }
+
+    // Apply sorting
+    const sortField = req.query.sort || '-created_at';
+    const [field, direction] = sortField.startsWith('-') 
+      ? [sortField.substring(1), 'desc'] 
+      : [sortField, 'asc'];
+    query = query.order(field, { ascending: direction === 'asc' });
+
+    // Apply pagination
+    query = query.range(offset, offset + limit - 1);
+
+    const { data: txs, error, count } = await query;
 
     if(error) throw error;
-    res.status(200).json({ status: 'success', data: txs });
+    
+    const response = formatPaginationResponse(txs || [], count || 0, page, limit);
+    res.status(200).json({ status: 'success', ...response });
   } catch(error) {
-     res.status(500).json({ status: 'error', message: 'Gagal mengambil riwayat transaksi' });
+    console.error('Get Wallet Transactions Error:', error);
+    res.status(500).json({ status: 'error', message: 'Gagal mengambil riwayat transaksi' });
   }
 };
 
-// 4. GET EARNING DETAILS (Breakdown pendapatan per submission/campaign)
+/**
+ * Get earning details dengan pagination, filter, dan search
+ * @query {number} page - Halaman (default: 1)
+ * @query {number} limit - Items per page (default: 10, max: 100)
+ * @query {string} platform - Filter: INSTAGRAM, TIKTOK, YOUTUBE
+ * @query {string} payment_status - Filter: DIBAYAR, MENUNGGU_PEMBAYARAN, DITOLAK, BELUM_SELESAI
+ * @query {number} earning_min - Filter minimum earning
+ * @query {number} earning_max - Filter maximum earning
+ * @query {string} sort - Sort: submitted_at, -submitted_at, net_earning, -net_earning, views, -views
+ */
 const getEarningDetails = async (req, res) => {
   try {
     const userId = req.user.id;
+    const { page, limit, offset } = parsePagination(req.query);
     const { data: creator, error: creatorErr } = await supabase
       .from('creators')
       .select('id')
@@ -149,7 +196,7 @@ const getEarningDetails = async (req, res) => {
     let totalEarned = 0;
     let totalPending = 0;
 
-    const earningRows = (submissions || []).map(s => {
+    let earningRows = (submissions || []).map(s => {
       const campData = Array.isArray(s.campaigns) ? s.campaigns[0] : s.campaigns;
       const netEarning = s.net_earning || 0;
       const isPaid = s.status === 'SELESAI';
@@ -175,7 +222,48 @@ const getEarningDetails = async (req, res) => {
       };
     });
 
-    // Hitung per-campaign summary
+    // Apply platform filter
+    if (req.query.platform) {
+      earningRows = earningRows.filter(r => r.platform === req.query.platform.toUpperCase());
+    }
+
+    // Apply payment_status filter
+    if (req.query.payment_status) {
+      earningRows = earningRows.filter(r => r.payment_status === req.query.payment_status.toUpperCase());
+    }
+
+    // Apply earning range filters
+    if (req.query.earning_min) {
+      earningRows = earningRows.filter(r => r.net_earning >= parseFloat(req.query.earning_min));
+    }
+    if (req.query.earning_max) {
+      earningRows = earningRows.filter(r => r.net_earning <= parseFloat(req.query.earning_max));
+    }
+
+    // Apply sorting
+    const sortField = req.query.sort || '-submitted_at';
+    const [field, direction] = sortField.startsWith('-') 
+      ? [sortField.substring(1), 'desc'] 
+      : [sortField, 'asc'];
+
+    earningRows.sort((a, b) => {
+      let aVal = a[field];
+      let bVal = b[field];
+      if (typeof aVal === 'string') {
+        aVal = aVal.toLowerCase();
+        bVal = bVal.toLowerCase();
+      }
+      if (direction === 'asc') {
+        return aVal > bVal ? 1 : -1;
+      } else {
+        return aVal < bVal ? 1 : -1;
+      }
+    });
+
+    // Apply pagination
+    const paginatedRows = earningRows.slice(offset, offset + limit);
+
+    // Hitung per-campaign summary from all rows (not paginated)
     const campaignSummary = {};
     earningRows.forEach(row => {
       if (!row.campaign_id) return;
@@ -194,6 +282,8 @@ const getEarningDetails = async (req, res) => {
       campaignSummary[row.campaign_id].total_earning += row.net_earning;
     });
 
+    const response = formatPaginationResponse(paginatedRows, earningRows.length, page, limit);
+
     res.status(200).json({
       status: 'success',
       data: {
@@ -202,8 +292,9 @@ const getEarningDetails = async (req, res) => {
           total_pending: totalPending
         },
         per_campaign: Object.values(campaignSummary),
-        earnings: earningRows
-      }
+        earnings: response.data
+      },
+      pagination: response.pagination
     });
 
   } catch (error) {

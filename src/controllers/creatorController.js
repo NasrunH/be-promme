@@ -1,6 +1,7 @@
 const supabase = require('../config/supabase');
 const speakeasy = require('speakeasy');
 const axios = require('axios'); // [TAMBAHAN]: Impor axios untuk HTTP requests
+const { parsePagination, parseFilters, parseSearch, parseSort, formatPaginationResponse } = require('../utils/pagination');
 
 // 1. SUBMIT KYC
 // Fungsi Helper untuk upload ke Supabase Storage
@@ -326,20 +327,53 @@ const registerBankAccount = async (req, res) => {
   }
 };
 
+/**
+ * Get creator's bank accounts dengan pagination dan filter
+ * @query {number} page - Halaman (default: 1)
+ * @query {number} limit - Items per page (default: 10, max: 100)
+ * @query {boolean} is_primary - Filter primary account (true/false)
+ * @query {string} bank_code - Filter by bank code
+ * @query {string} sort - Sort: created_at, -created_at, is_primary, -is_primary
+ */
 const getBankAccounts = async (req, res) => {
   try {
     const userId = req.user.id;
+    const { page, limit, offset } = parsePagination(req.query);
     const { data: creator } = await supabase.from('creators').select('id').eq('user_id', userId).single();
     if (!creator) return res.status(404).json({ status: 'error', message: 'Creator tidak ditemukan' });
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('creator_bank_accounts')
-      .select('*')
-      .eq('creator_id', creator.id)
-      .order('is_primary', { ascending: false });
+      .select('*', { count: 'exact' })
+      .eq('creator_id', creator.id);
+
+    // Apply is_primary filter
+    if (req.query.is_primary !== undefined) {
+      const isPrimary = req.query.is_primary === 'true';
+      query = query.eq('is_primary', isPrimary);
+    }
+
+    // Apply bank_code filter
+    if (req.query.bank_code) {
+      query = query.eq('bank_code', req.query.bank_code.toUpperCase());
+    }
+
+    // Apply sorting
+    const sortField = req.query.sort || '-is_primary';
+    const [field, direction] = sortField.startsWith('-') 
+      ? [sortField.substring(1), 'desc'] 
+      : [sortField, 'asc'];
+    query = query.order(field, { ascending: direction === 'asc' });
+
+    // Apply pagination
+    query = query.range(offset, offset + limit - 1);
+
+    const { data, error, count } = await query;
 
     if (error) throw error;
-    res.status(200).json({ status: 'success', data });
+    
+    const response = formatPaginationResponse(data || [], count || 0, page, limit);
+    res.status(200).json({ status: 'success', ...response });
   } catch (error) {
     res.status(500).json({ status: 'error', message: 'Gagal mengambil daftar rekening' });
   }

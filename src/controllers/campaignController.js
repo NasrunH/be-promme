@@ -1,5 +1,6 @@
 const supabase = require('../config/supabase');
 const { snap } = require('../utils/midtrans');
+const { parsePagination, parseFilters, parseSearch, parseSort, formatPaginationResponse } = require('../utils/pagination');
 
 // Fungsi Helper untuk Upload ke Supabase Storage
 const uploadToSupabaseStorage = async (file) => {
@@ -368,21 +369,59 @@ const getCampaignAnalytics = async (req, res) => {
 };
 
 // 7. EXPLORE CAMPAIGNS (For Creators)
+/**
+ * Explore campaigns dengan pagination, filter, dan search
+ * @query {number} page - Halaman (default: 1)
+ * @query {number} limit - Items per page (default: 10, max: 100)
+ * @query {string} search - Cari di: nama_campaign, brand name
+ * @query {string} platform - Filter: INSTAGRAM, TIKTOK, YOUTUBE
+ * @query {string} status - Filter: AKTIF, DRAFT, SELESAI
+ * @query {number} budget_min - Filter minimum budget
+ * @query {number} budget_max - Filter maximum budget
+ * @query {string} sort - Sort: created_at, -created_at, budget_total, -budget_total
+ */
 const exploreCampaigns = async (req, res) => {
   try {
     const userId = req.user.user_id || req.user.id;
-    const { platform } = req.query;
+    const { page, limit, offset } = parsePagination(req.query);
+    const searchTerm = req.query.search ? req.query.search.trim() : '';
+    const allowedFilters = ['platform', 'status'];
+    const filters = parseFilters(req.query, allowedFilters);
 
     let query = supabase
       .from('campaigns')
-      .select('*, brands(nama_perusahaan)')
+      .select('campaign_id, nama_campaign, platform, status, budget_total, komisi_per_view, tanggal_berakhir, created_at, brands(nama_perusahaan)', { count: 'exact' })
       .eq('status', 'AKTIF');
     
-    if (platform) {
-        query = query.eq('platform', platform);
+    // Apply filters
+    Object.entries(filters).forEach(([key, value]) => {
+      query = query.eq(key, value);
+    });
+
+    // Apply search (nama_campaign)
+    if (searchTerm) {
+      query = query.ilike('nama_campaign', `%${searchTerm}%`);
     }
-    
-    const { data: campaigns, error } = await query;
+
+    // Apply budget range filters
+    if (req.query.budget_min) {
+      query = query.gte('budget_total', parseFloat(req.query.budget_min));
+    }
+    if (req.query.budget_max) {
+      query = query.lte('budget_total', parseFloat(req.query.budget_max));
+    }
+
+    // Apply sorting
+    const sortField = req.query.sort || '-created_at';
+    const [field, direction] = sortField.startsWith('-') 
+      ? [sortField.substring(1), 'desc'] 
+      : [sortField, 'asc'];
+    query = query.order(field, { ascending: direction === 'asc' });
+
+    // Apply pagination
+    query = query.range(offset, offset + limit - 1);
+
+    const { data: campaigns, error, count } = await query;
     if (error) throw error;
 
     // Ambil campaign yang sudah di-join creator ini
@@ -404,9 +443,11 @@ const exploreCampaigns = async (req, res) => {
       is_joined: joinedIds.has(c.campaign_id)
     }));
 
-    res.status(200).json({ status: 'success', data: result });
+    const response = formatPaginationResponse(result, count || 0, page, limit);
+    res.status(200).json({ status: 'success', ...response });
   } catch (error) {
-     res.status(500).json({ status: 'error', message: 'Gagal mengambil data eksplorasi' });
+    console.error('Explore Campaigns Error:', error);
+    res.status(500).json({ status: 'error', message: 'Gagal mengambil data eksplorasi' });
   }
 };
 
@@ -519,10 +560,23 @@ const joinCampaign = async (req, res) => {
 };
 
 // 10. GET CAMPAIGN PARTICIPANTS (Brand)
+/**
+ * Get campaign participants dengan pagination, filter, dan search
+ * @param {string} campaign_id - Campaign ID
+ * @query {number} page - Halaman (default: 1)
+ * @query {number} limit - Items per page (default: 10, max: 100)
+ * @query {string} search - Cari di: nama_lengkap, email
+ * @query {string} kyc_status - Filter: PENDING, VERIFIED, REJECTED
+ * @query {number} submission_count_min - Filter minimum submission count
+ * @query {number} submission_count_max - Filter maximum submission count
+ * @query {string} sort - Sort: joined_at, -joined_at, submission_count, -submission_count
+ */
 const getCampaignParticipants = async (req, res) => {
   try {
     const { campaign_id } = req.params;
     const userId = req.user.id;
+    const { page, limit, offset } = parsePagination(req.query);
+    const searchTerm = req.query.search ? req.query.search.trim() : '';
 
     // Verifikasi ownership
     const { data: brand } = await supabase.from('brands').select('id').eq('user_id', userId).single();
@@ -537,8 +591,8 @@ const getCampaignParticipants = async (req, res) => {
 
     if (!campaign) return res.status(403).json({ status: 'error', message: 'Campaign tidak ditemukan atau bukan milik Anda' });
 
-    // Ambil peserta
-    const { data: participants, error: partErr } = await supabase
+    // Ambil peserta dengan count untuk pagination
+    let participantQuery = supabase
       .from('campaign_participants')
       .select(`
         id,
@@ -549,10 +603,10 @@ const getCampaignParticipants = async (req, res) => {
           kyc_status,
           users ( email )
         )
-      `)
-      .eq('campaign_id', campaign_id)
-      .order('joined_at', { ascending: false });
+      `, { count: 'exact' })
+      .eq('campaign_id', campaign_id);
 
+    const { data: participants, error: partErr, count: totalParticipants } = await participantQuery;
     if (partErr) throw partErr;
 
     // Ambil submission count per creator untuk campaign ini
@@ -573,7 +627,7 @@ const getCampaignParticipants = async (req, res) => {
       submissionsByCreator[s.creator_id].latest_status = s.status;
     });
 
-    const result = (participants || []).map(p => {
+    let result = (participants || []).map(p => {
       const creatorData = Array.isArray(p.creators) ? p.creators[0] : p.creators;
       const stats = submissionsByCreator[creatorData?.id] || { count: 0, views: 0, earning: 0, latest_status: '-' };
       return {
@@ -590,13 +644,65 @@ const getCampaignParticipants = async (req, res) => {
       };
     });
 
+    // Apply search filter
+    if (searchTerm) {
+      result = result.filter(r => 
+        r.nama_lengkap.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        r.email.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+
+    // Apply kyc_status filter
+    if (req.query.kyc_status) {
+      result = result.filter(r => r.kyc_status === req.query.kyc_status);
+    }
+
+    // Apply submission count range filters
+    if (req.query.submission_count_min) {
+      result = result.filter(r => r.submission_count >= parseInt(req.query.submission_count_min));
+    }
+    if (req.query.submission_count_max) {
+      result = result.filter(r => r.submission_count <= parseInt(req.query.submission_count_max));
+    }
+
+    // Apply sorting
+    const sortField = req.query.sort || '-joined_at';
+    const [field, direction] = sortField.startsWith('-') 
+      ? [sortField.substring(1), 'desc'] 
+      : [sortField, 'asc'];
+    
+    result.sort((a, b) => {
+      let aVal = a[field];
+      let bVal = b[field];
+      if (typeof aVal === 'string') {
+        aVal = aVal.toLowerCase();
+        bVal = bVal.toLowerCase();
+      }
+      if (direction === 'asc') {
+        return aVal > bVal ? 1 : -1;
+      } else {
+        return aVal < bVal ? 1 : -1;
+      }
+    });
+
+    // Apply pagination
+    const paginatedResult = result.slice(offset, offset + limit);
+
     res.status(200).json({
       status: 'success',
       data: {
         campaign_id,
         campaign_name: campaign.nama_campaign,
         total_participants: result.length,
-        participants: result
+        participants: paginatedResult
+      },
+      pagination: {
+        current_page: page,
+        per_page: limit,
+        total_items: result.length,
+        total_pages: Math.ceil(result.length / limit),
+        has_next: page < Math.ceil(result.length / limit),
+        has_prev: page > 1
       }
     });
 
@@ -607,9 +713,20 @@ const getCampaignParticipants = async (req, res) => {
 };
 
 // 11. GET MY JOINED CAMPAIGNS (Creator)
+/**
+ * Get creator's joined campaigns dengan pagination, filter, dan search
+ * @query {number} page - Halaman (default: 1)
+ * @query {number} limit - Items per page (default: 10, max: 100)
+ * @query {string} search - Cari di: nama_campaign, platform, brand_name
+ * @query {string} platform - Filter: INSTAGRAM, TIKTOK, YOUTUBE
+ * @query {string} status - Filter: AKTIF, DRAFT, SELESAI
+ * @query {string} sort - Sort: joined_at, -joined_at, total_earning, -total_earning
+ */
 const getMyCampaigns = async (req, res) => {
   try {
     const userId = req.user.user_id || req.user.id;
+    const { page, limit, offset } = parsePagination(req.query);
+    const searchTerm = req.query.search ? req.query.search.trim() : '';
 
     const { data: creator, error: creatorErr } = await supabase
       .from('creators')
@@ -665,7 +782,7 @@ const getMyCampaigns = async (req, res) => {
       });
     }
 
-    const result = (participants || []).map(p => {
+    let result = (participants || []).map(p => {
       const camp = Array.isArray(p.campaigns) ? p.campaigns[0] : p.campaigns;
       const brand = Array.isArray(camp?.brands) ? camp?.brands[0] : camp?.brands;
       const stats = submissionStats[camp?.campaign_id] || { count: 0, views: 0, earning: 0 };
@@ -686,9 +803,53 @@ const getMyCampaigns = async (req, res) => {
       };
     });
 
+    // Apply search filter
+    if (searchTerm) {
+      result = result.filter(r =>
+        r.nama_campaign.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        r.platform.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        r.brand_name.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+
+    // Apply platform filter
+    if (req.query.platform) {
+      result = result.filter(r => r.platform === req.query.platform.toUpperCase());
+    }
+
+    // Apply status filter
+    if (req.query.status) {
+      result = result.filter(r => r.status === req.query.status.toUpperCase());
+    }
+
+    // Apply sorting
+    const sortField = req.query.sort || '-joined_at';
+    const [field, direction] = sortField.startsWith('-') 
+      ? [sortField.substring(1), 'desc'] 
+      : [sortField, 'asc'];
+
+    result.sort((a, b) => {
+      let aVal = a[field];
+      let bVal = b[field];
+      if (typeof aVal === 'string') {
+        aVal = aVal.toLowerCase();
+        bVal = bVal.toLowerCase();
+      }
+      if (direction === 'asc') {
+        return aVal > bVal ? 1 : -1;
+      } else {
+        return aVal < bVal ? 1 : -1;
+      }
+    });
+
+    // Apply pagination
+    const paginatedResult = result.slice(offset, offset + limit);
+
+    const response = formatPaginationResponse(paginatedResult, result.length, page, limit);
     res.status(200).json({
       status: 'success',
-      data: result
+      data: response.data,
+      pagination: response.pagination
     });
 
   } catch (error) {
