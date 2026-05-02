@@ -99,7 +99,7 @@ const listUsers = async (req, res) => {
     try {
         const { page, limit, offset } = parsePagination(req.query);
         const searchTerm = req.query.search ? req.query.search.trim() : '';
-        const allowedFilters = ['status', 'role'];
+        const allowedFilters = ['status', 'role', 'kyc_status'];
         const filters = parseFilters(req.query, allowedFilters);
 
         // Build query
@@ -111,7 +111,12 @@ const listUsers = async (req, res) => {
 
         // Apply filters
         Object.entries(filters).forEach(([key, value]) => {
-            query = query.eq(key, value);
+            if (key === 'kyc_status') {
+                // Filter on joined creators table
+                query = query.eq('creators.kyc_status', value);
+            } else {
+                query = query.eq(key, value);
+            }
         });
 
         // Apply search (case-insensitive email)

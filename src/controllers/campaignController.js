@@ -390,7 +390,7 @@ const exploreCampaigns = async (req, res) => {
 
     let query = supabase
       .from('campaigns')
-      .select('campaign_id, nama_campaign, platform, status, budget_total, komisi_per_view, tanggal_berakhir, created_at, brands(nama_perusahaan)', { count: 'exact' })
+      .select('campaign_id, nama_campaign, platform, status, budget_total, komisi_per_view, tanggal_berakhir, created_at, asset_urls, brands(nama_perusahaan)', { count: 'exact' })
       .eq('status', 'AKTIF');
     
     // Apply filters
@@ -398,9 +398,20 @@ const exploreCampaigns = async (req, res) => {
       query = query.eq(key, value);
     });
 
-    // Apply search (nama_campaign)
+    // Apply search (nama_campaign OR brand_name)
     if (searchTerm) {
-      query = query.ilike('nama_campaign', `%${searchTerm}%`);
+      const { data: matchingBrands } = await supabase
+        .from('brands')
+        .select('id')
+        .ilike('nama_perusahaan', `%${searchTerm}%`);
+      
+      const brandIds = matchingBrands ? matchingBrands.map(b => b.id) : [];
+      
+      if (brandIds.length > 0) {
+        query = query.or(`nama_campaign.ilike.%${searchTerm}%,brand_id.in.(${brandIds.join(',')})`);
+      } else {
+        query = query.ilike('nama_campaign', `%${searchTerm}%`);
+      }
     }
 
     // Apply budget range filters

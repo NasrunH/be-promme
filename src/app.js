@@ -18,9 +18,11 @@ const financeRoutes = require('./routes/financeRoutes');
 
 const app = express();
 
-// 1. INITIALIZE BACKGROUND WORKERS
-initCronJobs();
-initTrafficTracker();
+// 1. INITIALIZE BACKGROUND WORKERS (Skip on Vercel Serverless)
+if (process.env.VERCEL !== '1') {
+  initCronJobs();
+  initTrafficTracker();
+}
 
 // 2. MIDDLEWARE
 app.use(cors());
