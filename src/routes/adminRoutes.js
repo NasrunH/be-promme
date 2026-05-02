@@ -4,10 +4,12 @@ const adminController = require('../controllers/adminController');
 const { protect } = require('../middlewares/authMiddleware');
 
 router.get('/users', protect(['ADMIN']), adminController.listUsers);
+router.post('/users', protect(['ADMIN']), adminController.createUser);
 router.patch('/users/:id/status', protect(['ADMIN']), adminController.updateUserStatus);
 router.patch('/kyc/:creator_id', protect(['ADMIN']), adminController.reviewKyc);
 router.patch('/campaigns/:campaign_id/fee', protect(['ADMIN']), adminController.updatePlatformFee);
 router.patch('/campaigns/:campaign_id/status', protect(['ADMIN']), adminController.updateCampaignStatus);
+router.get('/campaigns/:campaign_id', protect(['ADMIN']), adminController.getCampaignDetail);
 
 // Fraud Ops
 router.get('/fraud/anomalies', protect(['ADMIN']), adminController.getAnomalies);

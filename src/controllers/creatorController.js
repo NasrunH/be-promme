@@ -1,7 +1,7 @@
 const supabase = require('../config/supabase');
 const speakeasy = require('speakeasy');
 const axios = require('axios'); // [TAMBAHAN]: Impor axios untuk HTTP requests
-
+const { parsePagination, formatPaginationResponse } = require('../utils/pagination');
 // 1. SUBMIT KYC
 // Fungsi Helper untuk upload ke Supabase Storage
 const uploadToSupabase = async (file, folderName, userId) => {
@@ -110,7 +110,8 @@ const getProfile = async (req, res) => {
     const { data: creator, error } = await supabase
       .from('creators')
       .select(`
-        nik, npwp, kyc_status, ktp_image_url, selfie_image_url,
+        nama_lengkap, nik, npwp, kyc_status, ktp_image_url, selfie_image_url,
+        users (email, status, phone_number),
         connected_social_accounts (id, platform, username, status)
       `)
       .eq('user_id', userId)
