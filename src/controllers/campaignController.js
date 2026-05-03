@@ -390,7 +390,7 @@ const exploreCampaigns = async (req, res) => {
 
     let query = supabase
       .from('campaigns')
-      .select('campaign_id, nama_campaign, platform, status, budget_total, komisi_per_view, tanggal_berakhir, created_at, asset_urls, brands(nama_perusahaan)', { count: 'exact' })
+      .select('campaign_id, nama_campaign, platform, status, budget_total, komisi_per_view, tanggal_berakhir, created_at, asset_urls, brands(id, nama_perusahaan, logo_url)', { count: 'exact' })
       .eq('status', 'AKTIF');
     
     // Apply filters
@@ -408,7 +408,9 @@ const exploreCampaigns = async (req, res) => {
       const brandIds = matchingBrands ? matchingBrands.map(b => b.id) : [];
       
       if (brandIds.length > 0) {
-        query = query.or(`nama_campaign.ilike.%${searchTerm}%,brand_id.in.(${brandIds.join(',')})`);
+        // Build the OR query properly. Supabase needs a comma-separated list of quoted strings for UUIDs in some versions, 
+        // but simple formatting works if we use the postgrest syntax carefully.
+        query = query.or(`nama_campaign.ilike.%${searchTerm}%,brand_id.in.(${brandIds.map(id => `"${id}"`).join(',')})`);
       } else {
         query = query.ilike('nama_campaign', `%${searchTerm}%`);
       }
@@ -451,6 +453,7 @@ const exploreCampaigns = async (req, res) => {
     const result = (campaigns || []).map(c => ({
       ...c,
       brand_name: Array.isArray(c.brands) ? c.brands[0]?.nama_perusahaan : c.brands?.nama_perusahaan,
+      brand_logo: Array.isArray(c.brands) ? c.brands[0]?.logo_url : c.brands?.logo_url,
       is_joined: joinedIds.has(c.campaign_id)
     }));
 

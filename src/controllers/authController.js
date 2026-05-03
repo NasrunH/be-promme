@@ -164,4 +164,46 @@ const login = async (req, res) => {
   }
 };
 
-module.exports = { registerBrand, registerCreator, login };
+// 4. UBAH PASSWORD
+const changePassword = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { old_password, new_password } = req.body;
+
+    if (!old_password || !new_password) {
+      return res.status(400).json({ status: 'error', message: 'Password lama dan password baru wajib diisi' });
+    }
+
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('password_hash')
+      .eq('id', userId)
+      .single();
+
+    if (error || !user) {
+      return res.status(404).json({ status: 'error', message: 'User tidak ditemukan' });
+    }
+
+    const isMatch = await bcrypt.compare(old_password, user.password_hash);
+    if (!isMatch) {
+      return res.status(400).json({ status: 'error', message: 'Password lama salah' });
+    }
+
+    const newPasswordHash = await bcrypt.hash(new_password, 10);
+
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ password_hash: newPasswordHash })
+      .eq('id', userId);
+
+    if (updateError) throw updateError;
+
+    res.status(200).json({ status: 'success', message: 'Password berhasil diubah' });
+
+  } catch (error) {
+    console.error('Change Password Error:', error);
+    res.status(500).json({ status: 'error', message: 'Gagal merubah password' });
+  }
+};
+
+module.exports = { registerBrand, registerCreator, login, changePassword };

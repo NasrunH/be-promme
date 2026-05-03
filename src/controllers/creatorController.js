@@ -124,6 +124,40 @@ const getProfile = async (req, res) => {
   }
 };
 
+// 1.B UPDATE PROFILE
+const updateProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { nama_lengkap } = req.body;
+    let profile_picture_url = req.body.profile_picture_url;
+
+    if (req.file) {
+      profile_picture_url = await uploadToSupabase(req.file, 'profiles', userId);
+    }
+
+    const updateData = {};
+    if (nama_lengkap !== undefined) updateData.nama_lengkap = nama_lengkap;
+    if (profile_picture_url !== undefined) updateData.profile_picture_url = profile_picture_url;
+
+    const { data: creator, error } = await supabase
+      .from('creators')
+      .update(updateData)
+      .eq('user_id', userId)
+      .select();
+
+    if (error) throw error;
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Profil berhasil diupdate',
+      data: creator ? creator[0] : null
+    });
+  } catch (error) {
+    console.error('Update Profile Error:', error);
+    res.status(500).json({ status: 'error', message: error.message || 'Gagal mengupdate profil' });
+  }
+};
+
 // 2. CONNECT SOCIAL ACCOUNT - Real OAuth Implementation
 const connectSocialAccount = async (req, res) => {
   try {
@@ -611,5 +645,5 @@ const verify2FA = async (req, res) => {
 module.exports = { 
   submitKYC, connectSocialAccount, registerBankAccount, 
   getBankAccounts, updateBankAccount, deleteBankAccount,
-  setup2FA, verify2FA, getProfile 
+  setup2FA, verify2FA, getProfile, updateProfile 
 };

@@ -22,6 +22,7 @@ router.post('/kyc',
   creatorController.submitKYC
 );
 router.get('/profile', protect(['CREATOR']), creatorController.getProfile);
+router.put('/profile', protect(['CREATOR']), upload.single('profile_picture'), creatorController.updateProfile);
 router.post('/social-accounts/connect', protect(['CREATOR']), creatorController.connectSocialAccount);
 router.post('/bank-accounts', protect(['CREATOR']), creatorController.registerBankAccount);
 router.get('/bank-accounts', protect(['CREATOR']), creatorController.getBankAccounts);

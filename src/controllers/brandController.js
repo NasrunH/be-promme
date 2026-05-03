@@ -1,6 +1,26 @@
 // --- src/controllers/brandController.js ---
 const supabase = require('../config/supabase');
 
+// Fungsi Helper untuk Upload ke Supabase Storage
+const uploadToSupabaseStorage = async (file) => {
+  const fileName = `profiles/${Date.now()}-${file.originalname.replace(/\s+/g, '-')}`;
+  
+  const { data, error } = await supabase.storage
+    .from('campaign-assets')
+    .upload(fileName, file.buffer, {
+      contentType: file.mimetype,
+      upsert: false
+    });
+
+  if (error) throw error;
+
+  const { data: publicUrlData } = supabase.storage
+    .from('campaign-assets')
+    .getPublicUrl(fileName);
+
+  return publicUrlData.publicUrl;
+};
+
 const getProfile = async (req, res) => {
   try {
     // Amankan pengambilan ID (berjaga-jaga format JWT token)
@@ -8,7 +28,7 @@ const getProfile = async (req, res) => {
     
     const { data: brand, error } = await supabase
       .from('brands')
-      .select('nama_perusahaan, pic_name, phone_number')
+      .select('nama_perusahaan, pic_name, phone_number, logo_url')
       .eq('user_id', userId)
       .single();
 
@@ -29,10 +49,20 @@ const updateProfile = async (req, res) => {
   try {
     const userId = req.user.user_id || req.user.id;
     const { nama_perusahaan, pic_name, phone_number } = req.body;
+    let logo_url = req.body.logo_url;
+
+    if (req.file) {
+      logo_url = await uploadToSupabaseStorage(req.file);
+    }
+
+    const updateData = { nama_perusahaan, pic_name, phone_number };
+    if (logo_url !== undefined) {
+      updateData.logo_url = logo_url;
+    }
 
     const { data: brand, error } = await supabase
       .from('brands')
-      .update({ nama_perusahaan, pic_name, phone_number })
+      .update(updateData)
       .eq('user_id', userId)
       .select(); // [REVISI]: Hapus .single() agar tidak error jika user menyimpan data yang sama (0 rows affected)
 
