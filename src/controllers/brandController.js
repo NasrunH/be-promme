@@ -31,7 +31,7 @@ const getProfile = async (req, res) => {
         nama_perusahaan, pic_name, phone_number, logo_url,
         website, alamat, kota, provinsi, kode_pos, 
         industri, ukuran_perusahaan, deskripsi, tahun_berdiri,
-        users (email, status, phone_number as user_phone_number, profile_completed)
+        users (email, status, phone_number, profile_completed)
       `)
       .eq('user_id', userId)
       .single();
