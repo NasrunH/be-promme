@@ -52,9 +52,10 @@ const getPendingWithdrawals = async (req, res) => {
 const approveWithdrawal = async (req, res) => {
     try {
         const { id } = req.params;
+        const supabaseAdmin = require('../config/supabaseAdmin');
 
         // 1. Get withdrawal info
-        const { data: wd, error: wdError } = await supabase
+        const { data: wd, error: wdError } = await supabaseAdmin
             .from('withdrawals')
             .select('*')
             .eq('withdrawal_id', id)
@@ -63,38 +64,41 @@ const approveWithdrawal = async (req, res) => {
         if (wdError || !wd) return res.status(404).json({ status: 'error', message: 'Withdrawal not found' });
         if (wd.status !== 'QUEUED') return res.status(400).json({ status: 'error', message: 'Only QUEUED withdrawals can be approved' });
 
+        const amount = Number(wd.amount);
+
         // 2. Start Approval Process
-        // In a real app, this should be a transaction.
-        // For simplicity, we update withdrawal status and deduct pending_balance.
-        
-        const { error: updateWdError } = await supabase
+        const { error: updateWdError } = await supabaseAdmin
             .from('withdrawals')
             .update({ status: 'APPROVED' })
             .eq('withdrawal_id', id);
         
         if (updateWdError) throw updateWdError;
 
-        // Deduct from pending_balance
-        const { data: wallet } = await supabase
+        // Deduct from pending_balance and add to total_withdrawn
+        const { data: wallet, error: walletFetchError } = await supabaseAdmin
             .from('wallets')
             .select('*')
             .eq('creator_id', wd.creator_id)
             .single();
 
+        if (walletFetchError) throw walletFetchError;
+
         if (wallet) {
-            await supabase
+            const { error: walletUpdateError } = await supabaseAdmin
                 .from('wallets')
                 .update({ 
-                    pending_balance: Math.max(0, (wallet.pending_balance || 0) - wd.amount),
-                    total_withdrawn: (wallet.total_withdrawn || 0) + wd.amount
+                    pending_balance: Math.max(0, (Number(wallet.pending_balance) || 0) - amount),
+                    total_withdrawn: (Number(wallet.total_withdrawn) || 0) + amount
                 })
                 .eq('wallet_id', wallet.wallet_id);
 
+            if (walletUpdateError) throw walletUpdateError;
+
             // Add success transaction record
-            await supabase.from('wallet_transactions').insert([{
+            await supabaseAdmin.from('wallet_transactions').insert([{
                 wallet_id: wallet.wallet_id,
                 type: 'WITHDRAWAL_SUCCESS',
-                amount: wd.amount,
+                amount: amount,
                 reference_id: id,
                 idempotency_key: `WD-SUCCESS-${id}`
             }]);
@@ -103,7 +107,7 @@ const approveWithdrawal = async (req, res) => {
         res.json({ status: 'success', message: 'Withdrawal approved successfully' });
     } catch (e) {
         console.error('Approve Withdrawal Error:', e);
-        res.status(500).json({ status: 'error', message: e.message });
+        res.status(500).json({ status: 'error', message: e.message || 'Gagal menyetujui pencairan' });
     }
 };
 
@@ -111,9 +115,10 @@ const rejectWithdrawal = async (req, res) => {
     try {
         const { id } = req.params;
         const { reason } = req.body;
+        const supabaseAdmin = require('../config/supabaseAdmin');
 
         // 1. Get withdrawal info
-        const { data: wd, error: wdError } = await supabase
+        const { data: wd, error: wdError } = await supabaseAdmin
             .from('withdrawals')
             .select('*')
             .eq('withdrawal_id', id)
@@ -122,47 +127,52 @@ const rejectWithdrawal = async (req, res) => {
         if (wdError || !wd) return res.status(404).json({ status: 'error', message: 'Withdrawal not found' });
         if (wd.status !== 'QUEUED') return res.status(400).json({ status: 'error', message: 'Only QUEUED withdrawals can be rejected' });
 
+        const amount = Number(wd.amount);
+
         // 2. Refund to balance and deduct from pending_balance
-        const { data: wallet } = await supabase
+        const { data: wallet, error: walletFetchError } = await supabaseAdmin
             .from('wallets')
             .select('*')
             .eq('creator_id', wd.creator_id)
             .single();
 
+        if (walletFetchError) throw walletFetchError;
+
         if (wallet) {
-            const { error: walletUpdateError } = await supabase
+            const { error: walletUpdateError } = await supabaseAdmin
                 .from('wallets')
                 .update({ 
-                    balance: (wallet.balance || 0) + wd.amount,
-                    pending_balance: Math.max(0, (wallet.pending_balance || 0) - wd.amount)
+                    balance: (Number(wallet.balance) || 0) + amount,
+                    pending_balance: Math.max(0, (Number(wallet.pending_balance) || 0) - amount)
                 })
                 .eq('wallet_id', wallet.wallet_id);
             
             if (walletUpdateError) throw walletUpdateError;
 
             // Add refund transaction record
-            await supabase.from('wallet_transactions').insert([{
+            await supabaseAdmin.from('wallet_transactions').insert([{
                 wallet_id: wallet.wallet_id,
                 type: 'WITHDRAWAL_FAILED',
-                amount: wd.amount,
+                amount: amount,
                 reference_id: id,
                 idempotency_key: `WD-REFUND-${id}`
             }]);
         }
 
         // 3. Update withdrawal status
-        await supabase
+        const { error: updateWdError } = await supabaseAdmin
             .from('withdrawals')
             .update({ 
-                status: 'REJECTED',
-                failure_reason: reason || 'Ditolak oleh Finance Ops'
+                status: 'REJECTED'
             })
             .eq('withdrawal_id', id);
+
+        if (updateWdError) throw updateWdError;
 
         res.json({ status: 'success', message: 'Withdrawal rejected and funds returned to creator balance' });
     } catch (e) {
         console.error('Reject Withdrawal Error:', e);
-        res.status(500).json({ status: 'error', message: e.message });
+        res.status(500).json({ status: 'error', message: e.message || 'Gagal menolak pencairan' });
     }
 };
 
@@ -183,7 +193,7 @@ const getFailedWithdrawals = async (req, res) => {
         let query = supabase
             .from('withdrawals')
             .select('*, creators(id, nama_lengkap), creator_bank_accounts(*)', { count: 'exact' })
-            .eq('status', 'FAILED');
+            .in('status', ['FAILED', 'REJECTED']);
 
         // Apply amount range filters
         if (req.query.amount_min) {
@@ -212,9 +222,7 @@ const getFailedWithdrawals = async (req, res) => {
         if (searchTerm) {
             result = result.filter(w => {
                 const creatorName = Array.isArray(w.creators) ? w.creators[0]?.nama_lengkap : w.creators?.nama_lengkap;
-                const failureReason = w.failure_reason || '';
-                return creatorName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                       failureReason.toLowerCase().includes(searchTerm.toLowerCase());
+                return creatorName?.toLowerCase().includes(searchTerm.toLowerCase());
             });
         }
 

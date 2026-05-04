@@ -403,29 +403,129 @@ const getAnomalies = async (req, res) => {
         }
 
         // --- PART 2: LIST DATA FOR BROWSING ---
-        const { data: wallets, error: walErr } = await supabaseAdmin.from('wallets').select('wallet_id, balance, hold_balance, creators(nama_lengkap, users(id, email, role, status))');
-        if (walErr) console.error("[GET_ANOMALIES] Wallet Error:", walErr);
+        const { page, limit, offset } = parsePagination(req.query);
+        const { tab, search, status, sort } = req.query;
 
-        const { data: submissions, error: subErr } = await supabaseAdmin.from('submissions').select('submission_id, views_tervalidasi, status, submitted_at, campaigns(nama_campaign), creators(nama_lengkap), content_url').order('submitted_at', { ascending: false }).limit(100);
-        if (subErr) console.error("[GET_ANOMALIES] Submission Error:", subErr);
+        let totalItems = 0;
 
-        const { data: campaigns, error: campErr } = await supabaseAdmin.from('campaigns').select('campaign_id, nama_campaign, status, budget_total, budget_tersisa, brands(nama_perusahaan, user_id, users(status))').order('created_at', { ascending: false });
-        if (campErr) console.error("[GET_ANOMALIES] Campaign Error:", campErr);
+        const getSafeRel = (obj, key) => {
+            if (!obj) return '';
+            const target = Array.isArray(obj) ? obj[0] : obj;
+            if (!target) return '';
+            if (key.includes('.')) {
+                const keys = key.split('.');
+                let current = target;
+                for (const k of keys) {
+                    if (current == null) return '';
+                    current = current[k];
+                }
+                return current ?? '';
+            }
+            return target[key] ?? '';
+        };
 
-        const { data: brandsList, error: brandErr } = await supabaseAdmin.from('brands').select('id, nama_perusahaan, pic_name, user_id, users(email, status)');
-        if (brandErr) console.error("[GET_ANOMALIES] Brand Error:", brandErr);
+        const sortDir = sort && sort.startsWith('-') ? -1 : 1;
+        const sortKey = sort ? sort.replace('-', '') : '';
+
+        // Fetch based on active tab
+        let lists = { wallets: [], submissions: [], campaigns: [], brands: [] };
+
+        if (!tab || tab === 'alerts') {
+             totalItems = anomalies.length;
+        }
+
+        if (!tab || tab === 'wallets') {
+            const { data, error } = await supabaseAdmin.from('wallets').select('wallet_id, balance, hold_balance, creators(nama_lengkap, users(id, email, role, status))');
+            if (error) console.error("[GET_ANOMALIES] Wallet Error:", error);
+            
+            let arr = data || [];
+            if (search) {
+                const s = search.toLowerCase();
+                arr = arr.filter(w => getSafeRel(w.creators, 'users.email').toLowerCase().includes(s) || getSafeRel(w.creators, 'nama_lengkap').toLowerCase().includes(s) || String(w.wallet_id).includes(s));
+            }
+            if (status && status !== 'all') arr = arr.filter(w => getSafeRel(w.creators, 'users.status') === status.toUpperCase());
+            if (sortKey) arr.sort((a, b) => {
+                const valA = sortKey === 'balance' ? a.balance : sortKey === 'hold_balance' ? a.hold_balance : getSafeRel(a.creators, `users.${sortKey}`);
+                const valB = sortKey === 'balance' ? b.balance : sortKey === 'hold_balance' ? b.hold_balance : getSafeRel(b.creators, `users.${sortKey}`);
+                return valA < valB ? -1 * sortDir : valA > valB ? 1 * sortDir : 0;
+            });
+            totalItems = arr.length;
+            lists.wallets = arr.slice(offset, offset + limit);
+        }
+
+        if (!tab || tab === 'submissions') {
+            const { data, error } = await supabaseAdmin.from('submissions').select('submission_id, views_tervalidasi, status, submitted_at, campaigns(nama_campaign), creators(nama_lengkap), content_url').order('submitted_at', { ascending: false }).limit(1000);
+            if (error) console.error("[GET_ANOMALIES] Submission Error:", error);
+
+            let arr = data || [];
+            if (search) {
+                const s = search.toLowerCase();
+                arr = arr.filter(sub => getSafeRel(sub.campaigns, 'nama_campaign').toLowerCase().includes(s) || getSafeRel(sub.creators, 'nama_lengkap').toLowerCase().includes(s));
+            }
+            if (status && status !== 'all') arr = arr.filter(sub => sub.status === status.toUpperCase());
+            if (sortKey) arr.sort((a, b) => {
+                const valA = a[sortKey];
+                const valB = b[sortKey];
+                return valA < valB ? -1 * sortDir : valA > valB ? 1 * sortDir : 0;
+            });
+            totalItems = arr.length;
+            lists.submissions = arr.slice(offset, offset + limit);
+        }
+
+        if (!tab || tab === 'campaigns') {
+            const { data: cData, error: campErr } = await supabaseAdmin.from('campaigns').select('campaign_id, nama_campaign, status, budget_total, budget_tersisa, brands(nama_perusahaan, user_id, users(status))').order('created_at', { ascending: false });
+            if (campErr) console.error("[GET_ANOMALIES] Campaign Error:", campErr);
+
+            let cArr = cData || [];
+            if (search) {
+                const s = search.toLowerCase();
+                cArr = cArr.filter(c => (c.nama_campaign || '').toLowerCase().includes(s) || getSafeRel(c.brands, 'nama_perusahaan').toLowerCase().includes(s));
+            }
+            if (status && status !== 'all') cArr = cArr.filter(c => c.status === status.toUpperCase());
+            if (sortKey) cArr.sort((a, b) => {
+                const valA = a[sortKey];
+                const valB = b[sortKey];
+                return valA < valB ? -1 * sortDir : valA > valB ? 1 * sortDir : 0;
+            });
+            
+            totalItems = cArr.length;
+            lists.campaigns = cArr.slice(offset, offset + limit);
+
+            const { data: bData, error: brandErr } = await supabaseAdmin.from('brands').select('id, nama_perusahaan, pic_name, user_id, users(email, status)');
+            if (brandErr) console.error("[GET_ANOMALIES] Brand Error:", brandErr);
+
+            let bArr = bData || [];
+            if (search) {
+                const s = search.toLowerCase();
+                bArr = bArr.filter(b => (b.nama_perusahaan || '').toLowerCase().includes(s) || getSafeRel(b.users, 'email').toLowerCase().includes(s));
+            }
+            if (status && status !== 'all') bArr = bArr.filter(b => getSafeRel(b.users, 'status') === status.toUpperCase());
+            if (sortKey) bArr.sort((a, b) => {
+                const valA = getSafeRel(a.users, sortKey);
+                const valB = getSafeRel(b.users, sortKey);
+                return valA < valB ? -1 * sortDir : valA > valB ? 1 * sortDir : 0;
+            });
+            
+            lists.brands = bArr.slice(offset, offset + limit);
+        }
+        
+        const totalPages = Math.ceil(totalItems / limit) || 1;
+        const pagination = {
+            current_page: page,
+            per_page: limit,
+            total_items: totalItems,
+            total_pages: totalPages,
+            has_next: page < totalPages,
+            has_prev: page > 1,
+        };
 
         res.json({
             status: 'success',
             data: {
                 anomalies,
-                lists: {
-                    wallets: wallets || [],
-                    submissions: submissions || [],
-                    campaigns: campaigns || [],
-                    brands: brandsList || []
-                }
-            }
+                lists
+            },
+            pagination
         });
     } catch (e) {
         console.error("Get Anomalies Error:", e);
@@ -843,9 +943,45 @@ const getCampaignDetail = async (req, res) => {
 
 const getAuditLogs = async (req, res) => {
     try {
-        const { data, error } = await supabaseAdmin.from('audit_logs').select('*').order('created_at', { ascending: false });
+        const { parsePagination } = require('../utils/pagination');
+        const { page, limit, offset } = parsePagination(req.query);
+        const { search, status, sort } = req.query;
+
+        let q = supabaseAdmin.from('audit_logs').select('*', { count: 'exact' });
+
+        if (status && status !== 'all') {
+            q = q.eq('action', status.toUpperCase());
+        }
+
+        if (search) {
+            q = q.or(`action.ilike.%${search}%,entity_type.ilike.%${search}%,actor_id.ilike.%${search}%,entity_id.ilike.%${search}%`);
+        }
+
+        if (sort) {
+            const isDesc = sort.startsWith('-');
+            const sortField = sort.replace('-', '');
+            q = q.order(sortField, { ascending: !isDesc });
+        } else {
+            q = q.order('created_at', { ascending: false });
+        }
+
+        const { data, count, error } = await q.range(offset, offset + limit - 1);
         if (error) throw new Error(error.message);
-        res.json({ status: 'success', data });
+
+        const totalPages = Math.ceil(count / limit) || 1;
+
+        res.json({
+            status: 'success',
+            data,
+            pagination: {
+                current_page: page,
+                per_page: limit,
+                total_items: count || 0,
+                total_pages: totalPages,
+                has_next: page < totalPages,
+                has_prev: page > 1
+            }
+        });
     } catch (e) {
         res.status(500).json({ status: 'error', message: e.message });
     }
