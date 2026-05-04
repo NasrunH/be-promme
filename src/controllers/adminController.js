@@ -851,8 +851,53 @@ const getAuditLogs = async (req, res) => {
     }
 };
 
+const getDashboard = async (req, res) => {
+    try {
+        const [
+            usersCount, 
+            brandsCount, 
+            creatorsCount, 
+            campaignsCount, 
+            pendingKycCount, 
+            pendingWdCount,
+            totalViewsRes,
+            auditLogs
+        ] = await Promise.all([
+            supabaseAdmin.from('users').select('id', { count: 'exact', head: true }),
+            supabaseAdmin.from('users').select('id', { count: 'exact', head: true }).eq('role', 'BRAND'),
+            supabaseAdmin.from('users').select('id', { count: 'exact', head: true }).eq('role', 'CREATOR'),
+            supabaseAdmin.from('campaigns').select('campaign_id', { count: 'exact', head: true }),
+            supabaseAdmin.from('creators').select('id', { count: 'exact', head: true }).eq('kyc_status', 'PENDING'),
+            supabaseAdmin.from('withdrawals').select('withdrawal_id', { count: 'exact', head: true }).eq('status', 'QUEUED'),
+            supabaseAdmin.from('submissions').select('views_tervalidasi'),
+            supabaseAdmin.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(10)
+        ]);
+
+        const totalViews = (totalViewsRes.data || []).reduce((sum, s) => sum + (s.views_tervalidasi || 0), 0);
+
+        res.json({
+            status: 'success',
+            data: {
+                counts: {
+                    total_users: usersCount.count || 0,
+                    total_brands: brandsCount.count || 0,
+                    total_creators: creatorsCount.count || 0,
+                    total_campaigns: campaignsCount.count || 0,
+                    pending_kyc: pendingKycCount.count || 0,
+                    pending_withdrawals: pendingWdCount.count || 0
+                },
+                total_views: totalViews,
+                recent_logs: auditLogs.data || []
+            }
+        });
+    } catch (e) {
+        console.error("Admin Dashboard Error:", e);
+        res.status(500).json({ status: 'error', message: 'Gagal mengambil data dashboard platform' });
+    }
+};
+
 module.exports = {
     listUsers, createUser, updateUserStatus, reviewKyc, updatePlatformFee, updateCampaignStatus,
     getAnomalies, holdWalletBalance, releaseWalletBalance, invalidateSubmission, getCampaignDetail,
-    getAuditLogs, getSettings, updateSettings, approveSubmission
+    getAuditLogs, getSettings, updateSettings, approveSubmission, getDashboard
 };

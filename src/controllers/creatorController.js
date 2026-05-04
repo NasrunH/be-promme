@@ -35,10 +35,10 @@ const submitKYC = async (req, res) => {
     const userId = req.user.id;
 
     // 1. Validasi Input Data
-    if (!nik || nik.length !== 16) {
+    if (!nik || nik.length !== 16 || !/^\d+$/.test(nik)) {
       return res.status(400).json({ 
         status: "error", 
-        message: 'NIK wajib diisi dan harus berjumlah 16 digit.' 
+        message: 'NIK wajib diisi, harus berjumlah 16 digit, dan hanya berisi angka.' 
       });
     }
 
@@ -682,8 +682,47 @@ const verify2FA = async (req, res) => {
 };
 
 
+// 6. DASHBOARD INSIGHTS
+const getDashboard = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { data: creator } = await supabase.from('creators').select('id').eq('user_id', userId).single();
+    
+    if (!creator) return res.status(404).json({ status: 'error', message: 'Creator tidak ditemukan' });
+
+    // Parallel fetching for performance
+    const [walletRes, submissionsRes, campaignsRes] = await Promise.all([
+      supabase.from('wallets').select('*').eq('creator_id', creator.id).single(),
+      supabase.from('submissions').select('status, views_tervalidasi, net_earning').eq('creator_id', creator.id),
+      supabase.from('campaign_participants').select('id', { count: 'exact', head: true }).eq('creator_id', creator.id)
+    ]);
+
+    const wallet = walletRes.data || {};
+    const submissions = submissionsRes.data || [];
+    const totalJoined = campaignsRes.count || 0;
+
+    // Aggregations
+    const stats = {
+      total_views: submissions.reduce((sum, s) => sum + (s.views_tervalidasi || 0), 0),
+      total_submissions: submissions.length,
+      approved_submissions: submissions.filter(s => s.status === 'SELESAI' || s.status === 'APPROVED').length,
+      pending_submissions: submissions.filter(s => s.status === 'PENDING').length,
+      rejected_submissions: submissions.filter(s => s.status === 'DITOLAK').length,
+      net_earnings: wallet.total_earned || 0,
+      active_balance: wallet.balance || 0,
+      pending_payout: wallet.pending_balance || 0,
+      total_joined_campaigns: totalJoined
+    };
+
+    res.status(200).json({ status: 'success', data: stats });
+  } catch (error) {
+    console.error('Creator Dashboard Error:', error);
+    res.status(500).json({ status: 'error', message: 'Gagal mengambil data dashboard' });
+  }
+};
+
 module.exports = { 
   submitKYC, connectSocialAccount, registerBankAccount, 
   getBankAccounts, updateBankAccount, deleteBankAccount,
-  setup2FA, verify2FA, getProfile, updateProfile 
+  setup2FA, verify2FA, getProfile, updateProfile, getDashboard 
 };

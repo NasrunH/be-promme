@@ -3,6 +3,7 @@ const router = express.Router();
 const adminController = require('../controllers/adminController');
 const { protect } = require('../middlewares/authMiddleware');
 
+router.get('/dashboard', protect(['ADMIN']), adminController.getDashboard);
 router.get('/users', protect(['ADMIN']), adminController.listUsers);
 router.post('/users', protect(['ADMIN']), adminController.createUser);
 router.patch('/users/:id/status', protect(['ADMIN']), adminController.updateUserStatus);

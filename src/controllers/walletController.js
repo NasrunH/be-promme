@@ -48,10 +48,22 @@ const requestWithdrawal = async (req, res) => {
         return res.status(400).json({ status: 'error', message: 'Minimal penarikan adalah Rp 50.000' });
     }
 
-    const { data: wallet } = await supabase.from('wallets').select('balance').eq('creator_id', creator.id).single();
-    if (wallet.balance < amount) {
+    const { data: wallet } = await supabase.from('wallets').select('balance, pending_balance, version').eq('creator_id', creator.id).single();
+    if (!wallet || wallet.balance < amount) {
         return res.status(400).json({ status: 'error', message: 'Saldo tidak mencukupi' });
     }
+
+    // 4. Update Wallet (Deduct Balance and move to Pending)
+    const { error: walletError } = await supabase
+      .from('wallets')
+      .update({
+        balance: wallet.balance - amount,
+        pending_balance: (wallet.pending_balance || 0) + amount,
+        version: (wallet.version || 0) + 1
+      })
+      .eq('creator_id', creator.id);
+
+    if (walletError) throw walletError;
 
     const { data: wd, error } = await supabase
       .from('withdrawals')
@@ -65,9 +77,23 @@ const requestWithdrawal = async (req, res) => {
       .select().single();
 
     if (error) {
+        // Rollback balance if withdrawal insert fails
+        await supabase.from('wallets').update({
+            balance: wallet.balance,
+            pending_balance: wallet.pending_balance
+        }).eq('creator_id', creator.id);
+
         if (error.code === '23505') return res.status(400).json({ status: 'error', message: 'Request penarikan sudah ada (Idempotent)' });
         throw error;
     }
+
+    // 5. Create Transaction Record
+    await supabase.from('wallet_transactions').insert([{
+        wallet_id: (await supabase.from('wallets').select('wallet_id').eq('creator_id', creator.id).single()).data.wallet_id,
+        type: 'WITHDRAWAL',
+        amount: amount,
+        idempotency_key: `WD-TX-${idempotency_key}`
+    }]);
 
     res.status(202).json({
       status: 'success',

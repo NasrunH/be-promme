@@ -91,10 +91,10 @@ const updateProfile = async (req, res) => {
     if (kota !== undefined) updateData.kota = kota;
     if (provinsi !== undefined) updateData.provinsi = provinsi;
     if (kode_pos !== undefined) updateData.kode_pos = kode_pos;
-    if (industri !== undefined) updateData.industri = industri;
-    if (ukuran_perusahaan !== undefined) updateData.ukuran_perusahaan = ukuran_perusahaan;
+    if (industri !== undefined) updateData.industri = industri === "" ? null : industri;
+    if (ukuran_perusahaan !== undefined) updateData.ukuran_perusahaan = ukuran_perusahaan === "" ? null : ukuran_perusahaan;
     if (deskripsi !== undefined) updateData.deskripsi = deskripsi;
-    if (tahun_berdiri !== undefined) updateData.tahun_berdiri = parseInt(tahun_berdiri);
+    if (tahun_berdiri !== undefined) updateData.tahun_berdiri = tahun_berdiri === "" ? null : parseInt(tahun_berdiri);
     if (logo_url !== undefined) updateData.logo_url = logo_url;
 
     const { data: brand, error } = await supabase
@@ -145,18 +145,28 @@ const getDashboard = async (req, res) => {
       .select('status, views_tervalidasi, estimasi_komisi')
       .in('campaign_id', campaignIds);
 
-    let totalSubmissions = submissions.length;
-    let totalViews = submissions.reduce((acc, sub) => acc + sub.views_tervalidasi, 0);
+    const totalSubmissions = submissions.length;
+    const totalViews = submissions.reduce((acc, sub) => acc + (sub.views_tervalidasi || 0), 0);
+    const totalBudget = campaigns.reduce((acc, c) => acc + (c.budget_total || 0), 0);
+    const totalSpent = campaigns.reduce((acc, c) => acc + (c.budget_terpakai || 0), 0);
 
-    // Hitung aggregasi budgeting
-    let totalBudget = campaigns.reduce((acc, c) => acc + c.budget_total, 0);
-    let totalSpent = campaigns.reduce((acc, c) => acc + c.budget_terpakai, 0);
+    // Dapatkan total partisipan
+    const { count: totalParticipants } = await supabase
+      .from('campaign_participants')
+      .select('id', { count: 'exact', head: true })
+      .in('campaign_id', campaignIds);
+
+    const pendingSubmissions = submissions.filter(s => s.status === 'PENDING').length;
+    const activeCampaigns = campaigns.filter(c => c.status === 'AKTIF').length;
 
     res.status(200).json({
         status: 'success',
         data: {
             total_campaigns: campaigns.length,
+            active_campaigns: activeCampaigns,
+            total_participants: totalParticipants || 0,
             total_submissions: totalSubmissions,
+            pending_submissions: pendingSubmissions,
             total_views_tervalidasi: totalViews,
             total_budget: totalBudget,
             total_terpakai: totalSpent,
