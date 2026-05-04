@@ -8,6 +8,27 @@ const rollbackUser = async (userId) => {
   await supabase.from('users').delete().eq('id', userId);
 };
 
+// Helper for Profile Image Upload
+const uploadProfileImage = async (file, userId) => {
+  const fileExtension = file.originalname.split('.').pop();
+  const fileName = `profiles/${userId}_${Date.now()}.${fileExtension}`;
+
+  const { data, error } = await supabase.storage
+    .from('kyc-documents') // Reuse existing bucket or use a specific one
+    .upload(fileName, file.buffer, {
+      contentType: file.mimetype,
+      upsert: true
+    });
+
+  if (error) throw error;
+
+  const { data: publicUrlData } = supabase.storage
+    .from('kyc-documents')
+    .getPublicUrl(fileName);
+
+  return publicUrlData.publicUrl;
+};
+
 // 1. REGISTRASI BRAND
 const registerBrand = async (req, res) => {
   let userId = null;
@@ -206,4 +227,95 @@ const changePassword = async (req, res) => {
   }
 };
 
-module.exports = { registerBrand, registerCreator, login, changePassword };
+// 5. GET CURRENT USER INFO
+const getMe = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('id, email, role, status, nama_lengkap, profile_picture_url, created_at')
+      .eq('id', userId)
+      .single();
+
+    if (error || !user) {
+      return res.status(404).json({ status: 'error', message: 'User tidak ditemukan' });
+    }
+
+    let unifiedData = {
+      ...user,
+      display_name: user.nama_lengkap || user.email.split('@')[0],
+      display_picture: user.profile_picture_url
+    };
+
+    // If role is CREATOR or BRAND, fetch additional data
+    console.log(`[getMe] Role: ${user.role}, UserID: ${userId}`);
+    if (user.role === 'CREATOR') {
+      const { data: creator, error: cErr } = await supabase
+        .from('creators')
+        .select('nama_lengkap, profile_picture_url')
+        .eq('user_id', userId)
+        .single();
+      
+      console.log(`[getMe] Creator Data:`, creator, cErr);
+      if (creator) {
+        unifiedData.display_name = creator.nama_lengkap || unifiedData.display_name;
+        unifiedData.display_picture = creator.profile_picture_url || unifiedData.display_picture;
+      }
+    } else if (user.role === 'BRAND') {
+      const { data: brand, error: bErr } = await supabase
+        .from('brands')
+        .select('nama_perusahaan, logo_url')
+        .eq('user_id', userId)
+        .single();
+      
+      console.log(`[getMe] Brand Data:`, brand, bErr);
+      if (brand) {
+        unifiedData.display_name = brand.nama_perusahaan || unifiedData.display_name;
+        unifiedData.display_picture = brand.logo_url || unifiedData.display_picture;
+      }
+    }
+    console.log(`[getMe] Final Unified Data:`, unifiedData.display_name);
+
+    res.json({ status: 'success', data: unifiedData });
+  } catch (error) {
+    console.error('getMe Error:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error' });
+  }
+};
+
+// 6. UPDATE PROFILE (FOR ADMIN/FINANCE)
+const updateProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { nama_lengkap } = req.body;
+    let profile_picture_url = req.body.profile_picture_url;
+
+    if (req.file) {
+      profile_picture_url = await uploadProfileImage(req.file, userId);
+    }
+
+    const updateData = {};
+    if (nama_lengkap !== undefined) updateData.nama_lengkap = nama_lengkap;
+    if (profile_picture_url !== undefined) updateData.profile_picture_url = profile_picture_url;
+
+    const { data: user, error } = await supabase
+      .from('users')
+      .update(updateData)
+      .eq('id', userId)
+      .select('id, email, role, nama_lengkap, profile_picture_url')
+      .single();
+
+    if (error) throw error;
+
+    res.json({
+      status: 'success',
+      message: 'Profil berhasil diperbarui',
+      data: user
+    });
+  } catch (error) {
+    console.error('Update Profile Error:', error);
+    res.status(500).json({ status: 'error', message: error.message || 'Gagal memperbarui profil' });
+  }
+};
+
+module.exports = { registerBrand, registerCreator, login, changePassword, getMe, updateProfile };

@@ -110,9 +110,11 @@ const getProfile = async (req, res) => {
     const { data: creator, error } = await supabase
       .from('creators')
       .select(`
-        nama_lengkap, nik, npwp, kyc_status, ktp_image_url, selfie_image_url,
-        users (email, status, phone_number),
-        connected_social_accounts (id, platform, username, status)
+        nama_lengkap, nik, npwp, kyc_status, ktp_image_url, selfie_image_url, profile_picture_url,
+        bio, tanggal_lahir, jenis_kelamin, alamat, kota, provinsi, kode_pos, negara,
+        bahasa, kategori_niche, pengikut_total, engagement_rate,
+        users (email, status, phone_number, profile_completed),
+        connected_social_accounts (id, platform, username, status, followers_count, engagement_rate)
       `)
       .eq('user_id', userId)
       .single();
@@ -127,9 +129,32 @@ const getProfile = async (req, res) => {
 // 1.B UPDATE PROFILE
 const updateProfile = async (req, res) => {
   try {
+    const { validateCreatorProfile } = require('../utils/profileValidation');
+    
     const userId = req.user.id;
-    const { nama_lengkap } = req.body;
+    const { 
+      nama_lengkap, bio, tanggal_lahir, jenis_kelamin,
+      alamat, kota, provinsi, kode_pos, negara,
+      bahasa, kategori_niche
+    } = req.body;
     let profile_picture_url = req.body.profile_picture_url;
+
+    const validation = validateCreatorProfile({
+      nama_lengkap,
+      bio,
+      tanggal_lahir,
+      kode_pos,
+      bahasa: Array.isArray(bahasa) ? bahasa : (bahasa ? [bahasa] : []),
+      kategori_niche: Array.isArray(kategori_niche) ? kategori_niche : (kategori_niche ? [kategori_niche] : [])
+    });
+
+    if (!validation.isValid) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Validasi gagal: ' + Object.values(validation.errors).join(', '),
+        errors: validation.errors
+      });
+    }
 
     if (req.file) {
       profile_picture_url = await uploadToSupabase(req.file, 'profiles', userId);
@@ -137,6 +162,16 @@ const updateProfile = async (req, res) => {
 
     const updateData = {};
     if (nama_lengkap !== undefined) updateData.nama_lengkap = nama_lengkap;
+    if (bio !== undefined) updateData.bio = bio;
+    if (tanggal_lahir !== undefined) updateData.tanggal_lahir = tanggal_lahir;
+    if (jenis_kelamin !== undefined) updateData.jenis_kelamin = jenis_kelamin;
+    if (alamat !== undefined) updateData.alamat = alamat;
+    if (kota !== undefined) updateData.kota = kota;
+    if (provinsi !== undefined) updateData.provinsi = provinsi;
+    if (kode_pos !== undefined) updateData.kode_pos = kode_pos;
+    if (negara !== undefined) updateData.negara = negara;
+    if (bahasa !== undefined) updateData.bahasa = Array.isArray(bahasa) ? bahasa : [bahasa];
+    if (kategori_niche !== undefined) updateData.kategori_niche = Array.isArray(kategori_niche) ? kategori_niche : [kategori_niche];
     if (profile_picture_url !== undefined) updateData.profile_picture_url = profile_picture_url;
 
     const { data: creator, error } = await supabase

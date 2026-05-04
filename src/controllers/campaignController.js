@@ -615,6 +615,7 @@ const getCampaignParticipants = async (req, res) => {
           id,
           nama_lengkap,
           kyc_status,
+          profile_picture_url,
           users ( email )
         )
       `, { count: 'exact' })
@@ -651,6 +652,7 @@ const getCampaignParticipants = async (req, res) => {
         nama_lengkap: creatorData?.nama_lengkap || '-',
         email: (Array.isArray(creatorData?.users) ? creatorData?.users[0] : creatorData?.users)?.email || '-',
         kyc_status: creatorData?.kyc_status || '-',
+        profile_picture_url: creatorData?.profile_picture_url || null,
         submission_count: stats.count,
         total_views: stats.views,
         total_earning: stats.earning,
