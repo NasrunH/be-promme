@@ -122,7 +122,12 @@ const getProfile = async (req, res) => {
     if (error) throw error;
     res.status(200).json({ status: 'success', data: creator });
   } catch (error) {
-    res.status(500).json({ status: 'error', message: 'Gagal mengambil profile' });
+    console.error('getProfile Error:', error);
+    res.status(500).json({ 
+      status: 'error', 
+      message: 'Gagal mengambil profile: ' + error.message,
+      details: error
+    });
   }
 };
 
